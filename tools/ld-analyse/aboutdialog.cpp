@@ -31,7 +31,7 @@ AboutDialog::AboutDialog(QWidget *parent) :
 {
     ui->setupUi(this);
 
-    ui->gitVersionLabel->setText(QString("Build - Branch: %1 / Commit: %2").arg(APP_BRANCH, APP_COMMIT));
+    ui->gitVersionLabel->setText(QString("BuXXXild - Branch: %1 / Commit: %2").arg(APP_BRANCH, APP_COMMIT));
 }
 
 AboutDialog::~AboutDialog()
