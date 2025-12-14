@@ -61,12 +61,29 @@ def get_gpu_info():
     
     try:
         device = cp.cuda.Device()
+        
+        # Safely get device name
+        name = device.name
+        if name is None:
+            name = 'Unknown GPU'
+        elif isinstance(name, bytes):
+            name = name.decode('utf-8', errors='ignore')
+        else:
+            name = str(name)
+        
+        # Safely get PCI bus ID
+        pci_bus_id = 'unknown'
+        if hasattr(device, 'pci_bus_id'):
+            bus_id = device.pci_bus_id
+            if bus_id is not None:
+                pci_bus_id = bus_id.decode('utf-8', errors='ignore') if isinstance(bus_id, bytes) else str(bus_id)
+        
         return {
-            'name': device.name.decode('utf-8') if isinstance(device.name, bytes) else str(device.name),
+            'name': name,
             'compute_capability': device.compute_capability,
             'memory_total': device.mem_info[1],
             'memory_free': device.mem_info[0],
-            'pci_bus_id': device.pci_bus_id.decode('utf-8') if hasattr(device, 'pci_bus_id') else 'unknown'
+            'pci_bus_id': pci_bus_id
         }
     except Exception as e:
         logger.warning(f"Failed to get GPU info: {e}")

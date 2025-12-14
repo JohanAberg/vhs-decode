@@ -166,13 +166,9 @@ class VHSRFDecodeGPU(VHSRFDecode):
         """
         import time
         from vhsdecode import utils
-        from vhsdecode.demod import unwrap_hilbert
         from vhsdecode.chroma import demod_chroma_filt
         from vhsdecode.nonlinear_filter import sub_deemphasis, replace_spikes
         import scipy.signal as sps
-        
-        # Use the full numpy.fft module reference for clearer code
-        import numpy.fft as npfft
         
         rv = {}
         demod_start_time = time.time()
@@ -191,9 +187,10 @@ class VHSRFDecodeGPU(VHSRFDecode):
         
         # Keep data on CPU for operations that aren't GPU-optimized yet
         if data is None:
-            data = npfft.ifft(transfer_from_gpu(indata_fft_gpu)).real
+            data = np.fft.ifft(transfer_from_gpu(indata_fft_gpu)).real
         
-        # Debug plot handling (CPU operation)
+        # Debug plot handling (CPU operation) - cache for later use
+        indata_fft_copy = None
         if self.debug_plot and self.debug_plot.is_plot_requested("demodblock"):
             indata_fft_copy = transfer_from_gpu(indata_fft_gpu).copy()
         
@@ -223,7 +220,7 @@ class VHSRFDecodeGPU(VHSRFDecode):
         # High boost processing (CPU for now)
         if len(np.where(env == 0)[0]) == 0:
             if self._high_boost is not None:
-                data_filtered = npfft.ifft(transfer_from_gpu(indata_fft_gpu)).real
+                data_filtered = np.fft.ifft(transfer_from_gpu(indata_fft_gpu)).real
                 high_part = utils.filter_simple(
                     data_filtered, self.Filters["RFTop"]
                 ) * ((env_mean * 0.9) / env)
@@ -276,7 +273,7 @@ class VHSRFDecodeGPU(VHSRFDecode):
         # Nonlinear deemphasis (CPU for now)
         if self.options.nldeemp:
             out_video_fft = transfer_from_gpu(out_video_fft_gpu)
-            hf_part = npfft.irfft(out_video_fft * self.Filters["NLHighPassF"])
+            hf_part = np.fft.irfft(out_video_fft * self.Filters["NLHighPassF"])
             np.clip(
                 hf_part,
                 self.DecoderParams["nonlinear_highpass_limit_l"],
@@ -334,9 +331,11 @@ class VHSRFDecodeGPU(VHSRFDecode):
         # Debug plotting (CPU)
         if self.debug_plot and self.debug_plot.is_plot_requested("magdens"):
             from vhsdecode.debug_plot import plot_magnitude_density
+            # Use cached copy if available, otherwise transfer from GPU
+            filtered_data_cpu = indata_fft_copy if indata_fft_copy is not None else transfer_from_gpu(indata_fft_gpu)
             plot_magnitude_density(
                 raw_data=data[: self.blocklen],
-                filtered_data=npfft.ifft(transfer_from_gpu(indata_fft_gpu)).real,
+                filtered_data=np.fft.ifft(filtered_data_cpu).real,
                 rfdecode=self,
             )
         
@@ -379,13 +378,27 @@ class VHSRFDecodeGPU(VHSRFDecode):
         
         return rv
     
-    def __del__(self):
-        """Cleanup GPU resources on deletion."""
+    def cleanup(self):
+        """
+        Explicit cleanup of GPU resources.
+        
+        Call this method when done with the decoder to free GPU memory immediately.
+        Can also be used as a context manager.
+        """
         if self.use_gpu:
             try:
                 free_gpu_memory()
             except Exception:
                 pass
+    
+    def __enter__(self):
+        """Context manager entry."""
+        return self
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Context manager exit - cleanup resources."""
+        self.cleanup()
+        return False
 
 
 # Convenience function for creating decoders with GPU support

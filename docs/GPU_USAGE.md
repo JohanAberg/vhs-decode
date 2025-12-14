@@ -123,6 +123,20 @@ decoder = VHSRFDecodeGPU(
 
 # Decode data
 result = decoder.demodblock(rf_data)
+
+# Cleanup GPU resources when done
+decoder.cleanup()
+```
+
+Or use as a context manager for automatic cleanup:
+
+```python
+from vhsdecode.process_gpu import VHSRFDecodeGPU
+
+# Context manager ensures GPU resources are cleaned up
+with VHSRFDecodeGPU(inputfreq=40, system="NTSC", use_gpu=True) as decoder:
+    result = decoder.demodblock(rf_data)
+    # GPU memory automatically freed on exit
 ```
 
 ### Automatic Fallback

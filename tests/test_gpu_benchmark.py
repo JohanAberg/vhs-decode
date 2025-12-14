@@ -44,6 +44,13 @@ def benchmark_data_32k():
 
 
 @pytest.fixture
+def benchmark_filter_32k():
+    """Generate filter for 32K samples."""
+    np.random.seed(42)  # Use same seed for reproducibility
+    return np.random.randn(32768).astype(np.float32)
+
+
+@pytest.fixture
 def benchmark_data_64k():
     """Generate 64K sample test data."""
     np.random.seed(42)
@@ -99,10 +106,10 @@ class TestFilteringBenchmark:
     """Benchmark frequency-domain filtering operations."""
     
     @pytest.mark.benchmark(group="filtering")
-    def test_filter_cpu(self, benchmark, benchmark_data_32k):
+    def test_filter_cpu(self, benchmark, benchmark_data_32k, benchmark_filter_32k):
         """Benchmark CPU filtering."""
         fft_data = np.fft.fft(benchmark_data_32k)
-        filter_data = np.random.randn(len(benchmark_data_32k)).astype(np.float32)
+        filter_data = benchmark_filter_32k
         
         def cpu_filter():
             filtered = fft_data * filter_data
@@ -112,11 +119,11 @@ class TestFilteringBenchmark:
         result = benchmark(cpu_filter)
         
     @pytest.mark.benchmark(group="filtering")
-    def test_filter_gpu(self, benchmark, benchmark_data_32k):
+    def test_filter_gpu(self, benchmark, benchmark_data_32k, benchmark_filter_32k):
         """Benchmark GPU filtering."""
         gpu_data = cp.asarray(benchmark_data_32k)
         fft_data = cp.fft.fft(gpu_data)
-        filter_data = cp.random.randn(len(benchmark_data_32k)).astype(cp.float32)
+        filter_data = cp.asarray(benchmark_filter_32k)
         
         def gpu_filter():
             filtered = fft_data * filter_data
