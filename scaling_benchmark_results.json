@@ -1,0 +1,42 @@
+[
+  {
+    "sample": "sony_short_40M_8b",
+    "threads": 1,
+    "frames": 100,
+    "cpu_time_s": 2.75,
+    "gpu_time_s": 2.92,
+    "speedup": 0.94,
+    "cpu_fps": 36.4,
+    "gpu_fps": 34.2
+  },
+  {
+    "sample": "sony_short_40M_8b",
+    "threads": 2,
+    "frames": 100,
+    "cpu_time_s": 2.6,
+    "gpu_time_s": 2.88,
+    "speedup": 0.9,
+    "cpu_fps": 38.48,
+    "gpu_fps": 34.69
+  },
+  {
+    "sample": "sony_short_40M_8b",
+    "threads": 4,
+    "frames": 100,
+    "cpu_time_s": 2.5,
+    "gpu_time_s": 2.84,
+    "speedup": 0.88,
+    "cpu_fps": 40.03,
+    "gpu_fps": 35.26
+  },
+  {
+    "sample": "sony_short_40M_8b",
+    "threads": 8,
+    "frames": 100,
+    "cpu_time_s": 2.46,
+    "gpu_time_s": 2.95,
+    "speedup": 0.84,
+    "cpu_fps": 40.61,
+    "gpu_fps": 33.91
+  }
+]
