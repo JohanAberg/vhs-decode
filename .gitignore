@@ -93,3 +93,14 @@ vhsdecode/*.c
 
 # auto-generated version file
 vhsdecode/_version.py
+
+# GPU-related artifacts
+benchmark_results.json
+benchmark_report.md
+*.nvprof
+*.nsys-rep
+*.qdrep
+
+# Test data (too large for repo)
+tests/fixtures/gpu_validation/*.lds
+tests/fixtures/gpu_validation/*.ldf

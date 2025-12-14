@@ -26,6 +26,10 @@ hifi_gui_qt6 = [ "PyQt6>=6.4.2" ]
 # Can probably be depcretaded now since it's also an option in vhs-decode to use it.
 hifi_gnuradio = [ "pyzmq" ]
 gnuradio = [ "pyzmq" ]
+gpu = [
+    "cupy-cuda11x>=12.0.0; python_version >= '3.9'",
+    "cupy-cuda12x>=12.0.0; python_version >= '3.9'"
+]
 
 [project.scripts]
 ld-decode = "lddecode.main:main"
