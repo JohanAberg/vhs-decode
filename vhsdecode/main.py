@@ -329,6 +329,20 @@ def main(args=None, use_gui=False):
         default=0,
         help="GPU device ID to use (default: 0). Use nvidia-smi to list available GPUs.",
     )
+    gpu_group.add_argument(
+        "--gpu-optimize-transfers",
+        dest="optimize_transfers",
+        action="store_true",
+        default=True,
+        help="Use Phase 2 optimizations to reduce CPU↔GPU transfers (default: enabled). "
+             "Provides 3-6x speedup over Phase 1. Disable for debugging with --no-gpu-optimize-transfers.",
+    )
+    gpu_group.add_argument(
+        "--no-gpu-optimize-transfers",
+        dest="optimize_transfers",
+        action="store_false",
+        help="Disable Phase 2 transfer optimizations (use Phase 1 implementation).",
+    )
 
     args = parser.parse_args(args)
 
@@ -422,6 +436,7 @@ def main(args=None, use_gui=False):
     extra_options["params_file"] = args.params_file
     extra_options["use_gpu"] = args.use_gpu
     extra_options["gpu_id"] = args.gpu_id
+    extra_options["optimize_transfers"] = args.optimize_transfers
 
     # Wrap the LDdecode creation so that the signal handler is not taken by sub-threads,
     # allowing SIGINT/control-C's to be handled cleanly
