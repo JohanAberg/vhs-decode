@@ -11,13 +11,25 @@ import time
 from pathlib import Path
 
 from vhsdecode.gpu_utils import GPU_AVAILABLE
-from tests.benchmark_tracker import BenchmarkTracker
+from .benchmark_tracker import BenchmarkTracker
 
 # Skip all GPU benchmarks if GPU is not available
 pytestmark = pytest.mark.skipif(not GPU_AVAILABLE, reason="GPU not available")
 
-# Import cupy conditionally
+# Import cupy conditionally and handle CUDA errors gracefully
 if GPU_AVAILABLE:
+    try:
+        import cupy as cp
+        # Test basic CUDA functionality
+        cp.array([1, 2, 3])
+        CUDA_FUNCTIONAL = True
+    except Exception as e:
+        # CUDA libraries not available, skip tests that require actual GPU computation
+        CUDA_FUNCTIONAL = False
+        cp = None
+else:
+    CUDA_FUNCTIONAL = False
+    cp = None
     import cupy as cp
 
 
@@ -302,6 +314,7 @@ class TestTransferOverhead:
         result = benchmark(roundtrip)
 
 
+@pytest.mark.skipif(not CUDA_FUNCTIONAL, reason="CUDA libraries not available")
 def test_speedup_tracking(benchmark_data_32k):
     """
     Track speedup metrics and ensure targets are met.

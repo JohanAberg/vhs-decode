@@ -4,7 +4,7 @@ import numpy as np
 
 import vhsdecode.process as process
 import vhsdecode.utils as utils
-from vhsdecode.sync import calczc as c_calczc
+# from vhsdecode.sync import calczc as c_calczc  # Not available in compiled module
 import matplotlib.pyplot as plt
 
 

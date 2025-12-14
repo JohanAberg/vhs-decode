@@ -62,14 +62,14 @@ def get_gpu_info():
     try:
         device = cp.cuda.Device()
         
-        # Safely get device name
-        name = device.name
-        if name is None:
-            name = 'Unknown GPU'
-        elif isinstance(name, bytes):
-            name = name.decode('utf-8', errors='ignore')
-        else:
-            name = str(name)
+        # Safely get device name using proper CuPy API
+        try:
+            name = cp.cuda.runtime.getDeviceProperties(device.id)['name']
+            if isinstance(name, bytes):
+                name = name.decode('utf-8', errors='ignore')
+        except:
+            # Fallback if properties not available
+            name = f'GPU Device {device.id}'
         
         # Safely get PCI bus ID
         pci_bus_id = 'unknown'
