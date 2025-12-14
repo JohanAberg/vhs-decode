@@ -104,10 +104,28 @@ htmlcov/
 
 # GPU-related artifacts
 benchmark_results.json
+scaling_benchmark_results.json
 benchmark_report.md
 *.nvprof
 *.prof
 *.nsight-cuprof-report
+
+# Benchmark and test output files
+bench_*.log
+bench_*.tbc
+bench_*.tbc.json
+bench_*_chroma.tbc
+output_*.log
+output_*.tbc
+output_*.tbc.json
+output_*_chroma.tbc
+test_*.log
+test_*.tbc
+test_*.tbc.json
+test_*_chroma.tbc
+
+# Sample data directory (too large for repo)
+sample_data/
 
 # IDE and editor artifacts
 *.swp
