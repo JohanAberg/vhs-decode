@@ -80,7 +80,16 @@ class VHSRFDecodeGPU(VHSRFDecode):
             
             # Log GPU info
             device = cp.cuda.Device()
-            logger.info(f"Using GPU: {device.name}")
+            try:
+                # Get device name using proper CuPy API
+                device_props = cp.cuda.runtime.getDeviceProperties(device.id)
+                device_name = device_props['name']
+                if isinstance(device_name, bytes):
+                    device_name = device_name.decode('utf-8', errors='ignore')
+            except:
+                device_name = f'GPU Device {device.id}'
+                
+            logger.info(f"Using GPU: {device_name}")
             logger.info(f"VRAM: {device.mem_info[1]/1e9:.2f} GB total, "
                        f"{device.mem_info[0]/1e9:.2f} GB free")
             
@@ -167,7 +176,8 @@ class VHSRFDecodeGPU(VHSRFDecode):
         import time
         from vhsdecode import utils
         from vhsdecode.chroma import demod_chroma_filt
-        from vhsdecode.nonlinear_filter import sub_deemphasis, replace_spikes
+        from vhsdecode.nonlinear_filter import sub_deemphasis
+        from vhsdecode.demod import replace_spikes
         import scipy.signal as sps
         
         rv = {}
