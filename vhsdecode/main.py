@@ -310,6 +310,25 @@ def main(args=None, use_gui=False):
         default=False,
         help="Open a ZMQ pipe back and forth to GNU Radio for RF AFE/EQ/Group delay measurements. (WIP)\nYou might want to use this with -t 1",
     )
+    
+    # GPU acceleration options
+    gpu_group = parser.add_argument_group("GPU acceleration options")
+    gpu_group.add_argument(
+        "--gpu",
+        "--use-gpu",
+        dest="use_gpu",
+        action="store_true",
+        default=False,
+        help="Use GPU acceleration (requires CUDA and CuPy). Falls back to CPU if GPU not available.",
+    )
+    gpu_group.add_argument(
+        "--gpu-id",
+        dest="gpu_id",
+        metavar="device_id",
+        type=int,
+        default=0,
+        help="GPU device ID to use (default: 0). Use nvidia-smi to list available GPUs.",
+    )
 
     args = parser.parse_args(args)
 
@@ -401,6 +420,8 @@ def main(args=None, use_gui=False):
 
     extra_options = get_extra_options(args, not use_gui)
     extra_options["params_file"] = args.params_file
+    extra_options["use_gpu"] = args.use_gpu
+    extra_options["gpu_id"] = args.gpu_id
 
     # Wrap the LDdecode creation so that the signal handler is not taken by sub-threads,
     # allowing SIGINT/control-C's to be handled cleanly

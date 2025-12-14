@@ -249,6 +249,30 @@ There is a [Linux compatibility doc](https://docs.google.com/document/d/132ycIMM
 
 Other dependencies include Python 3.8+, numpy, scipy, cython, numba, pandas, Qt5, qwt, Cmake, and FFmpeg.
 
+## GPU Acceleration (Optional)
+
+VHS-Decode now supports **GPU acceleration** for significantly faster decoding (typically 3-6x speedup). This is optional and the software works fine without it.
+
+**Requirements:**
+- NVIDIA GPU with CUDA support (Compute Capability 6.0+)
+- CUDA Toolkit 11.0 or newer
+- CuPy Python package
+
+**Installation:**
+```bash
+# Install CUDA from https://developer.nvidia.com/cuda-downloads
+# Then install CuPy (choose based on your CUDA version):
+pip install cupy-cuda11x  # For CUDA 11.x
+pip install cupy-cuda12x  # For CUDA 12.x
+```
+
+**Usage:**
+```bash
+vhs-decode --gpu input.lds output
+```
+
+See [docs/GPU_USAGE.md](docs/GPU_USAGE.md) for detailed GPU setup instructions, performance tips, and troubleshooting.
+
 </details>
 
 
