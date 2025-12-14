@@ -249,15 +249,23 @@ There is a [Linux compatibility doc](https://docs.google.com/document/d/132ycIMM
 
 Other dependencies include Python 3.8+, numpy, scipy, cython, numba, pandas, Qt5, qwt, Cmake, and FFmpeg.
 
-## GPU Acceleration (Optional)
+## GPU Acceleration (Experimental - Phase 1)
 
-VHS-Decode now supports **GPU acceleration** for dramatically faster decoding with **proven 4-12x speedup** on NVIDIA RTX hardware. This is optional and the software works fine without it.
+VHS-Decode has **experimental GPU acceleration** support that is functionally complete but currently optimized for correctness rather than performance. Phase 2 performance optimization is planned.
 
-**✅ Validated Performance:**
-- FFT Operations: 6-12x speedup
-- Complex Processing: 5-6x speedup  
-- End-to-End Pipeline: 4x speedup
-- Identical output quality to CPU processing
+**✅ Phase 1 Status (Dec 15, 2025):**
+- **Framework:** Fully operational, production-ready for testing
+- **Correctness:** 100% identical output to CPU (17/17 tests passing)
+- **Performance:** 0.87x speed (currently 13% slower than CPU)
+- **Root Cause:** 17 CPU↔GPU transfers per block create overhead
+- **Optimal Config:** Use 4 threads for GPU, 8 threads for CPU
+
+**Component Performance (Isolated Tests):**
+- FFT Operations: 6.5-11.8x speedup
+- Complex Processing: 5.7x speedup  
+- Filtering Operations: 1.6x speedup
+
+**Phase 2 Target:** 3-6x overall speedup by eliminating transfer bottleneck
 
 **Requirements:**
 - NVIDIA GPU with CUDA support (Compute Capability 6.0+, Pascal or newer)
@@ -275,12 +283,19 @@ pip install cupy-cuda11x  # For CUDA 11.x
 
 **Usage:**
 ```bash
-vhs-decode --gpu input.lds output  # Enable GPU acceleration
+vhs-decode --gpu --threads 4 input.lds output  # Enable GPU (use 4 threads for optimal GPU performance)
+vhs-decode --threads 8 input.lds output        # CPU-only (use 8 threads for optimal CPU performance)
 ```
 
-**Tested Hardware:** RTX 4070 Ti, RTX 3060/3070, RTX 4080/4090, Tesla/Quadro cards
+**Tested Hardware:** RTX 4070 Ti (primary validation), RTX 3060/3070, RTX 4080/4090
 
-See [docs/GPU_USAGE.md](docs/GPU_USAGE.md) for detailed GPU setup instructions, performance benchmarks, and troubleshooting.
+**Documentation:**
+- [GPU Usage Guide](docs/GPU_USAGE.md) - Setup and configuration
+- [GPU Performance Analysis](GPU_PERFORMANCE_ANALYSIS.md) - Benchmark results and bottleneck analysis
+- [GPU Scaling Analysis](GPU_SCALING_ANALYSIS.md) - Thread scaling investigation
+- [GPU Testing Guide](docs/GPU_TESTING.md) - Running tests and benchmarks
+
+**Note:** Phase 1 focuses on correctness and framework stability. Use CPU decoding for production work until Phase 2 performance optimization is complete.
 
 </details>
 

@@ -23,21 +23,30 @@ The decoder operates on fixed-size blocks (32K-131K samples) with overlap-save F
 - **`VHSDecode`** (vhsdecode/process.py): High-level wrapper, handles formats/parameters  
 - **`DemodCache`** (lddecode/core.py): Threaded block processing with caching
 
-## 🎉 GPU ACCELERATION SUCCESS (Phase 1 Complete)
+## 🎉 GPU ACCELERATION - Phase 1 Complete (Dec 15, 2025)
 
-### ✅ VALIDATED IMPLEMENTATION (Dec 15, 2025)
+### ✅ FRAMEWORK COMPLETE - AWAITING PHASE 2 OPTIMIZATION
 
-**Performance Achievements:**
-- FFT Operations: **6.5x-11.8x speedup** (32K-64K samples)
+**Phase 1 Achievements:**
+- **Framework:** Fully operational, production-ready structure
+- **Correctness:** 100% output match with CPU (17/17 tests passing)
+- **Real-World Testing:** Successfully processed 2.77GB-4.35GB PAL samples (1000+ fields)
+- **Error Handling:** Robust CPU fallback, graceful degradation
+- **Memory Management:** Efficient GPU memory handling, no leaks
+
+**Component Performance (Isolated Benchmarks):**
+- FFT Operations: **6.5x-11.8x speedup** (validated)
 - Complex Operations: **5.7x speedup** (angle calculations)
 - Filtering Operations: **1.6x speedup** (frequency domain)
-- End-to-End Pipeline: **4.1x speedup** (demod simulation)
 
-**Test Coverage:** 17/17 unit tests passing, 16/16 benchmarks passing, comprehensive integration tests
+**Real-World Performance (End-to-End):**
+- Current: **0.87x speed** (13% slower than CPU)
+- Root Cause: **17 CPU↔GPU transfers per block** (1.7-17ms overhead)
+- Optimal Config: **CPU: 8 threads, GPU: 4 threads**
+
+**Phase 2 Target:** 3-6x overall speedup by eliminating transfer bottleneck
 
 **Hardware Validated:** NVIDIA RTX 4070 Ti (12GB), CUDA 12.6, CuPy 13.6.0, Windows 11
-
-**Production Ready:** ✅ Framework operational, memory management working, precision validated
 
 ---
 
