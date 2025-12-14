@@ -1,14 +1,29 @@
 ---
-description: GPU acceleration implementation guidelines for VHS-Decode
+description: Comprehensive AI coding instructions for VHS-Decode RF signal decoder
 applyTo: '**'
 priority: high
 ---
 
-# GPU Implementation Instructions for AI Agents
+# VHS-Decode AI Coding Instructions
 
-## Overview
+## Project Overview
 
-When working on GPU acceleration for VHS-Decode, follow these critical guidelines to ensure correctness, performance, and maintainability.
+VHS-Decode is a sophisticated RF signal decoder for analog video formats (VHS, LaserDisc, Betamax, Video8/Hi8, etc.). It processes raw 40 MSPS RF captures from tape heads directly, bypassing hardware video circuits through pure software decoding using FFT-based digital signal processing.
+
+### Core Architecture: Block-Based FFT Pipeline
+
+**Data Flow:**
+```
+Raw RF (40 MSPS) → 32KB FFT Blocks → RF Bandpass → Hilbert → FM Demod → Video/Chroma Separation → TBC Output
+```
+
+The decoder operates on fixed-size blocks (32K-131K samples) with overlap-save FFT processing, enabling parallel processing and filter operations in frequency domain. Key classes:
+
+- **`VHSRFDecode`** (vhsdecode/process.py): Core decoder, inherits from lddecode.RFDecode
+- **`VHSDecode`** (vhsdecode/process.py): High-level wrapper, handles formats/parameters  
+- **`DemodCache`** (lddecode/core.py): Threaded block processing with caching
+
+## Critical Development Principles
 
 ## Core Principles
 
@@ -413,11 +428,131 @@ python tests/generate_performance_report.py
 - Store as `.tbc` and `.tbc.json`
 - Update when CPU decoder changes significantly
 
+## Project Architecture & Development Workflows
+
+### Block Processing Pipeline
+
+Understand the core data flow through the decoder:
+
+1. **Raw RF Input** (40 MSPS samples)
+2. **DemodCache** manages threaded block processing
+3. **VHSRFDecode.demodblock()** - Core per-block processing:
+   - FFT → RF filtering → Hilbert transform → FM demod → Video/Chroma separation
+4. **Field assembly** and time-base correction
+5. **TBC output** (.tbc/.json files)
+
+**Key Files:**
+- [lddecode/core.py](lddecode/core.py) - Base RFDecode class, DemodCache threading
+- [vhsdecode/process.py](vhsdecode/process.py) - VHS-specific decoder implementation
+- [vhsdecode/formats.py](vhsdecode/formats.py) - Format definitions and parameters
+
+### Signal Processing Patterns
+
+**FFT Operations:** Most processing uses overlap-save FFT with frequency-domain filtering:
+```python
+# Standard pattern throughout codebase
+indata_fft = npfft.fft(data[:self.blocklen])
+filtered_fft = indata_fft * self.Filters["FilterName"]
+output = npfft.ifft(filtered_fft).real
+```
+
+**Filter Definitions:** Located in `compute_video_filters.py` - precomputed frequency-domain filters
+
+### Testing & Quality Assurance
+
+**Run Tests:**
+```bash
+# Quick validation
+python -m pytest tests/test_gpu_quick.py -v
+
+# Full test suite (requires test captures)
+python -m pytest tests/ -v --tb=short
+
+# Performance benchmarking
+python tests/test_gpu_benchmark.py
+```
+
+**Test Data:** Store validation captures in `tests/fixtures/gpu_validation/`
+
+### Build System
+
+**Python Development:**
+```bash
+# Install in development mode
+pip install -e .
+
+# With GPU support
+pip install -e .[gpu]
+
+# Run decoder
+vhs-decode input.r40 output.tbc --system NTSC
+```
+
+**C++ Tools (CMake):**
+```bash
+cmake -B build -S . -DCMAKE_BUILD_TYPE=Release
+cmake --build build --parallel
+```
+
+### Format Support
+
+**Tape Formats:** VHS, SVHS, Betamax, Video8/Hi8, U-Matic, etc.
+**TV Systems:** NTSC, PAL, PAL-M, SECAM/MESECAM, 405-line
+**Sample Rates:** Typically 40 MSPS, but configurable
+
+**Format Selection:**
+```bash
+vhs-decode input.r40 output.tbc --system PAL --tape-format SVHS
+```
+
+### Key Dependencies
+
+**Core:** NumPy, SciPy, Numba for performance-critical code
+**Optional:** CuPy for GPU acceleration, PyQt5/6 for GUI tools
+**Build:** CMake for C++ tools, setuptools_scm for versioning
+
+### Cross-Platform Considerations
+
+**Platform Detection:** [vhsdecode/__init__.py](vhsdecode/__init__.py) handles platform-specific library loading
+**Build Differences:** Windows uses different library paths, macOS requires special thread handling
+
+### Performance Optimization
+
+**CPU Optimization:**
+- Numba JIT compilation for hot paths (`.pyx` files)
+- Vectorized NumPy operations
+- Pre-computed filter coefficients
+
+**Memory Management:**
+- Fixed block sizes to avoid allocation overhead
+- Overlap-save processing to reuse FFT computations
+- LRU cache in DemodCache for processed blocks
+
+### Debugging Workflows
+
+**Debug Plots:** Use `--debug-plot` flag to visualize signal processing stages
+
+**Common Issues:**
+- **Poor tracking:** Check RF signal strength in envelope detector
+- **Sync issues:** Verify hsync detection with 0.5MHz filter
+- **Dropouts:** Check envelope detection thresholds
+
+**Log Analysis:**
+```python
+import logging
+logging.getLogger('lddecode').setLevel(logging.DEBUG)
+```
+
 ## Summary
 
-**Three Golden Rules:**
+**Three Golden Rules for GPU Development:**
 1. ✅ **Test Everything** - Write tests first, validate against CPU
 2. 📊 **Benchmark Constantly** - Track performance at every step
 3. 🔄 **Maintain Compatibility** - Always support CPU fallback
 
-Following these guidelines ensures GPU acceleration is correct, fast, and maintainable.
+**Architecture Understanding:**
+- Master the block-based FFT pipeline
+- Understand DemodCache threading model
+- Know the signal processing flow from RF to TBC
+
+Following these guidelines ensures both GPU acceleration and general development are correct, fast, and maintainable.
