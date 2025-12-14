@@ -88,16 +88,33 @@ ui_*.h
 .vscode/
 .theia/
 
-# cython build artifacts
+# Cython build artifacts
 vhsdecode/*.c
+**/*.pyd
+**/*.so
 
 # auto-generated version file
 vhsdecode/_version.py
+
+# Python test and cache artifacts
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
 
 # GPU-related artifacts
 benchmark_results.json
 benchmark_report.md
 *.nvprof
+*.prof
+*.nsight-cuprof-report
+
+# IDE and editor artifacts
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
 *.nsys-rep
 *.qdrep
 
