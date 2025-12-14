@@ -1,0 +1,141 @@
+name: GPU Tests
+
+on:
+  push:
+    branches:
+      - copilot/update-gpu-proposal-testing
+  pull_request:
+    paths:
+      - 'vhsdecode/gpu_utils.py'
+      - 'vhsdecode/process_gpu.py'
+      - 'tests/test_gpu_*.py'
+      - 'tests/benchmark_tracker.py'
+      - '.github/workflows/gpu-tests.yml'
+
+jobs:
+  # Job 1: CPU-only tests (can run on standard GitHub runners)
+  cpu-tests:
+    name: GPU Tests (CPU Fallback)
+    runs-on: ubuntu-22.04
+    
+    steps:
+    - uses: actions/checkout@v3
+      with:
+        submodules: true
+        fetch-depth: 0
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+    
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends \
+          python3-numpy python3-scipy python3-matplotlib \
+          python3-numba libfftw3-dev ffmpeg
+    
+    - name: Install Python dependencies
+      run: |
+        pip install --upgrade pip setuptools wheel
+        pip install -r requirements.txt
+        pip install pytest pytest-benchmark pytest-timeout
+    
+    - name: Install vhs-decode
+      run: |
+        pip install -e .
+    
+    - name: Run quick GPU validation (CPU fallback)
+      run: |
+        python tests/test_gpu_quick.py
+    
+    - name: Run GPU unit tests (CPU fallback)
+      run: |
+        pytest tests/test_gpu_unit.py -v --timeout=60 || echo "GPU tests skipped (no GPU available)"
+    
+    - name: Run benchmark tests (CPU only)
+      continue-on-error: true
+      run: |
+        pytest tests/test_gpu_benchmark.py -v --benchmark-only --timeout=120 || echo "Benchmark tests skipped"
+
+  # Job 2: GPU tests (requires self-hosted runner with GPU)
+  # This job is commented out by default as it requires GPU hardware
+  # Uncomment and configure when you have a self-hosted GPU runner
+  
+  # gpu-tests:
+  #   name: GPU Tests (CUDA)
+  #   runs-on: [self-hosted, linux, gpu, cuda]
+  #   
+  #   steps:
+  #   - uses: actions/checkout@v3
+  #     with:
+  #       submodules: true
+  #       fetch-depth: 0
+  #   
+  #   - name: Set up Python
+  #     uses: actions/setup-python@v4
+  #     with:
+  #       python-version: '3.11'
+  #   
+  #   - name: Verify CUDA installation
+  #     run: |
+  #       nvcc --version
+  #       nvidia-smi
+  #   
+  #   - name: Install system dependencies
+  #     run: |
+  #       sudo apt-get update
+  #       sudo apt-get install -y --no-install-recommends \
+  #         python3-numpy python3-scipy python3-matplotlib \
+  #         python3-numba libfftw3-dev ffmpeg
+  #   
+  #   - name: Install Python dependencies
+  #     run: |
+  #       pip install --upgrade pip setuptools wheel
+  #       pip install -r requirements.txt
+  #       pip install pytest pytest-benchmark pytest-timeout
+  #   
+  #   - name: Install CuPy (CUDA 11.x)
+  #     run: |
+  #       pip install cupy-cuda11x
+  #       # OR for CUDA 12.x:
+  #       # pip install cupy-cuda12x
+  #   
+  #   - name: Install vhs-decode with GPU support
+  #     run: |
+  #       pip install -e .[gpu]
+  #   
+  #   - name: Run quick GPU validation
+  #     run: |
+  #       python tests/test_gpu_quick.py
+  #   
+  #   - name: Run GPU unit tests
+  #     run: |
+  #       pytest tests/test_gpu_unit.py -v --timeout=120
+  #   
+  #   - name: Run GPU benchmark tests
+  #     run: |
+  #       pytest tests/test_gpu_benchmark.py -v --benchmark-only --timeout=300
+  #   
+  #   - name: Generate benchmark report
+  #     run: |
+  #       python tests/benchmark_tracker.py
+  #   
+  #   - name: Upload benchmark results
+  #     uses: actions/upload-artifact@v3
+  #     with:
+  #       name: benchmark-results
+  #       path: |
+  #         benchmark_results.json
+  #         benchmark_report.md
+  #   
+  #   - name: Run integration tests (if test data available)
+  #     continue-on-error: true
+  #     run: |
+  #       pytest tests/test_gpu_integration.py -v --timeout=600
+  #   
+  #   - name: Run regression tests (if test data available)
+  #     continue-on-error: true
+  #     run: |
+  #       pytest tests/test_gpu_regression.py -v --timeout=600

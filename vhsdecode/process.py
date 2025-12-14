@@ -124,15 +124,33 @@ class VHSDecode(ldd.LDdecode):
 
         # Adjustment for output to avoid clipping.
         self.level_adjust = level_adjust
-        # Overwrite the rf  with the VHS-altered one
-        self.rf = VHSRFDecode(
-            system=system,
-            tape_format=tape_format,
-            inputfreq=inputfreq,
-            rf_options=rf_options,
-            extra_options=extra_options,
-            debug_plot=debug_plot,
-        )
+        
+        # Check if GPU acceleration is requested
+        use_gpu = extra_options.get("use_gpu", False)
+        gpu_id = extra_options.get("gpu_id", 0)
+        
+        # Overwrite the rf with the VHS-altered one (GPU or CPU)
+        if use_gpu:
+            from vhsdecode.process_gpu import VHSRFDecodeGPU
+            self.rf = VHSRFDecodeGPU(
+                system=system,
+                tape_format=tape_format,
+                inputfreq=inputfreq,
+                rf_options=rf_options,
+                extra_options=extra_options,
+                debug_plot=debug_plot,
+                use_gpu=True,
+                gpu_id=gpu_id,
+            )
+        else:
+            self.rf = VHSRFDecode(
+                system=system,
+                tape_format=tape_format,
+                inputfreq=inputfreq,
+                rf_options=rf_options,
+                extra_options=extra_options,
+                debug_plot=debug_plot,
+            )
 
         if system == "405":
             SysParams_PAL = sys_params_pal_temp
