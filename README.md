@@ -279,6 +279,10 @@ Currently, MacOS builds while supported and deployable these are not directly ve
 
 </details>
 
+## GPU Acceleration Instructions
+
+Guidelines for adding and maintaining GPU acceleration (testing, benchmarking, CPU fallback, precision, memory, and CI) are documented in [.github/copilot-instructions.md](.github/copilot-instructions.md). For general project docs, see the [Wiki](https://github.com/oyvindln/vhs-decode/wiki).
+
 <details closed>
 <summary>Installation on Linux (Ubuntu/Debian-based)</summary>
 <br>
