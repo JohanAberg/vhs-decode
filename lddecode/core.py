@@ -4314,6 +4314,10 @@ class LDdecode:
         vp["gitBranch"] = self.branch
         vp["gitCommit"] = self.commit
 
+        # isMapped indicates whether ld-discmap has been run on this TBC
+        # Raw decodes are not mapped, so this is always false for decoder output
+        vp["isMapped"] = False
+
         vp["system"] = f.rf.system
 
         vp["fieldWidth"] = f.rf.SysParams["outlinelen"]
