@@ -1,0 +1,41 @@
+2025-12-15 17:55:47,283 - lddecode - DEBUG - VBI EQ serration pulses search failed (using fallback logic)
+2025-12-15 17:55:47,607 - lddecode - DEBUG - VBI serration levels 3 - Sync tip: 3819.05 kHz, Blanking (ire0): 4123.07 kHz
+2025-12-15 17:55:47,712 - lddecode - DEBUG - VBI serration levels 3 - Sync tip: 3817.65 kHz, Blanking (ire0): 4123.01 kHz
+2025-12-15 17:55:47,765 - lddecode - DEBUG - Trying to detect PAL track phase...
+2025-12-15 17:55:47,875 - lddecode - DEBUG - Phase previously set: 0
+2025-12-15 17:55:47,875 - lddecode - DEBUG - phase0 mean: 2705.79
+2025-12-15 17:55:47,875 - lddecode - DEBUG - phase1 mean: 126.41
+2025-12-15 17:55:47,875 - lddecode - DEBUG - assumed_phase: 0
+2025-12-15 17:55:48,005 - lddecode - DEBUG - VBI serration levels 4 - Sync tip: 3819.43 kHz, Blanking (ire0): 4123.48 kHz
+2025-12-15 17:55:48,152 - lddecode - DEBUG - VBI serration levels 4 - Sync tip: 3819.29 kHz, Blanking (ire0): 4123.34 kHz
+2025-12-15 17:55:48,196 - lddecode - DEBUG - File Frame 1: VHS 
+2025-12-15 17:55:48,284 - lddecode - DEBUG - VBI serration levels 3 - Sync tip: 3821.10 kHz, Blanking (ire0): 4129.58 kHz
+2025-12-15 17:55:48,414 - lddecode - DEBUG - VBI serration levels 4 - Sync tip: 3818.94 kHz, Blanking (ire0): 4123.08 kHz
+2025-12-15 17:55:48,455 - lddecode - DEBUG - File Frame 2: VHS 
+2025-12-15 17:55:48,548 - lddecode - DEBUG - VBI serration levels 4 - Sync tip: 3818.82 kHz, Blanking (ire0): 4123.05 kHz
+2025-12-15 17:55:48,708 - lddecode - DEBUG - VBI serration levels 4 - Sync tip: 3818.57 kHz, Blanking (ire0): 4122.80 kHz
+2025-12-15 17:55:48,752 - lddecode - DEBUG - File Frame 3: VHS 
+2025-12-15 17:55:48,860 - lddecode - DEBUG - VBI serration levels 4 - Sync tip: 3818.49 kHz, Blanking (ire0): 4123.01 kHz
+2025-12-15 17:55:49,035 - lddecode - DEBUG - VBI serration levels 4 - Sync tip: 3818.62 kHz, Blanking (ire0): 4123.13 kHz
+2025-12-15 17:55:49,083 - lddecode - DEBUG - File Frame 4: VHS 
+2025-12-15 17:55:49,200 - lddecode - DEBUG - VBI serration levels 4 - Sync tip: 3818.76 kHz, Blanking (ire0): 4123.25 kHz
+2025-12-15 17:55:49,368 - lddecode - DEBUG - VBI serration levels 4 - Sync tip: 3818.75 kHz, Blanking (ire0): 4123.52 kHz
+2025-12-15 17:55:49,416 - lddecode - DEBUG - File Frame 5: VHS 
+2025-12-15 17:55:49,544 - lddecode - DEBUG - VBI serration levels 4 - Sync tip: 3818.70 kHz, Blanking (ire0): 4123.71 kHz
+2025-12-15 17:55:49,731 - lddecode - DEBUG - VBI serration levels 4 - Sync tip: 3818.52 kHz, Blanking (ire0): 4123.58 kHz
+2025-12-15 17:55:49,782 - lddecode - DEBUG - File Frame 6: VHS 
+2025-12-15 17:55:49,915 - lddecode - DEBUG - VBI serration levels 4 - Sync tip: 3818.41 kHz, Blanking (ire0): 4123.65 kHz
+2025-12-15 17:55:50,095 - lddecode - DEBUG - VBI serration levels 4 - Sync tip: 3818.69 kHz, Blanking (ire0): 4123.98 kHz
+2025-12-15 17:55:50,143 - lddecode - DEBUG - File Frame 7: VHS 
+2025-12-15 17:55:50,272 - lddecode - DEBUG - VBI serration levels 4 - Sync tip: 3818.67 kHz, Blanking (ire0): 4123.84 kHz
+2025-12-15 17:55:50,458 - lddecode - DEBUG - VBI serration levels 4 - Sync tip: 3818.70 kHz, Blanking (ire0): 4123.04 kHz
+2025-12-15 17:55:50,506 - lddecode - DEBUG - File Frame 8: VHS 
+2025-12-15 17:55:50,640 - lddecode - DEBUG - VBI serration levels 3 - Sync tip: 3820.57 kHz, Blanking (ire0): 4129.44 kHz
+2025-12-15 17:55:50,824 - lddecode - DEBUG - VBI serration levels 4 - Sync tip: 3818.27 kHz, Blanking (ire0): 4122.46 kHz
+2025-12-15 17:55:50,886 - lddecode - DEBUG - File Frame 9: VHS 
+2025-12-15 17:55:51,077 - lddecode - DEBUG - VBI serration levels 4 - Sync tip: 3818.35 kHz, Blanking (ire0): 4121.93 kHz
+2025-12-15 17:55:51,249 - lddecode - DEBUG - VBI serration levels 4 - Sync tip: 3818.46 kHz, Blanking (ire0): 4122.16 kHz
+2025-12-15 17:55:51,294 - lddecode - DEBUG - File Frame 10: VHS 
+2025-12-15 17:55:51,406 - lddecode - DEBUG - VBI serration levels 4 - Sync tip: 3818.79 kHz, Blanking (ire0): 4122.53 kHz
+2025-12-15 17:55:51,569 - lddecode - DEBUG - VBI serration levels 3 - Sync tip: 3817.40 kHz, Blanking (ire0): 4122.91 kHz
+2025-12-15 17:55:51,616 - lddecode - DEBUG - File Frame 11: VHS 

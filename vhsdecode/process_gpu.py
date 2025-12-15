@@ -140,7 +140,7 @@ class VHSRFDecodeGPU(VHSRFDecode):
         self.Filters_gpu = {}
         
         try:
-            # Convert IIR envelope filter to FIR for GPU processing
+            # Convert IIR filters to FIR for GPU processing
             from vhsdecode.filter_conversion import design_fir_envelope_filter
             
             logger.info("Converting envelope filter from IIR to FIR for GPU...")
@@ -154,6 +154,17 @@ class VHSRFDecodeGPU(VHSRFDecode):
             # Store both time-domain and frequency-domain representations
             self.Filters["FEnvPost_FIR"] = fir_coeffs  # CPU version (for reference)
             self.Filters_gpu["FEnvPost_FIR_freq"] = cp.asarray(fir_freq)  # GPU frequency-domain
+            
+            # Convert FVideoBurst from IIR to FIR for GPU chroma processing
+            logger.info("Converting FVideoBurst filter from IIR to FIR for GPU...")
+            burst_fir_coeffs, burst_fir_freq = design_fir_envelope_filter(
+                self.Filters["FVideoBurst"],  # Original IIR in SOS format
+                self.freq_hz,                 # Sample rate
+                self.blocklen,                # FFT block size
+                fir_length=51                 # FIR filter length
+            )
+            self.Filters["FVideoBurst_FIR"] = burst_fir_coeffs
+            self.Filters_gpu["FVideoBurst_freq"] = cp.asarray(burst_fir_freq)  # GPU frequency-domain
             
             for key, value in self.Filters.items():
                 if isinstance(value, np.ndarray):
@@ -209,7 +220,9 @@ class VHSRFDecodeGPU(VHSRFDecode):
             free_gpu_memory()  # Clean up GPU memory
             return super().demodblock(data, mtf_level, fftdata, cut, thread_benchmark)
         except Exception as e:
+            import traceback
             logger.error(f"Unexpected error in GPU demodblock: {e}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
             # Fallback to CPU
             free_gpu_memory()
             return super().demodblock(data, mtf_level, fftdata, cut, thread_benchmark)
@@ -373,20 +386,35 @@ class VHSRFDecodeGPU(VHSRFDecode):
         del out_video05_gpu, demod_fft_gpu
         out_video05 = np.roll(out_video05, -self.Filters["F05_offset"])
         
-        # Chroma processing (CPU for now)
-        chroma_source = data if self.options.color_under else out_video
-        out_chroma = (
-            demod_chroma_filt(
-                chroma_source,
-                self.Filters["FVideoBurst"],
+        # Chroma processing (GPU-accelerated)
+        from vhsdecode.gpu_utils import demod_chroma_filt_gpu
+        
+        if not self._do_cafc:
+            # Determine chroma source
+            if self.options.color_under:
+                chroma_source_gpu = transfer_to_gpu(data[:self.blocklen])
+            else:
+                chroma_source_gpu = transfer_to_gpu(out_video)
+            
+            # Get frequency-domain notch filter if available
+            notch_filter_gpu = None
+            if self._notch and "FVideoNotchF" in self.Filters_gpu:
+                notch_filter_gpu = self.Filters_gpu["FVideoNotchF"]
+            
+            # GPU chroma filtering
+            out_chroma_gpu = demod_chroma_filt_gpu(
+                chroma_source_gpu,
+                self.Filters_gpu["FVideoBurst_freq"],  # Frequency-domain FIR
                 self.blocklen,
-                self.Filters["FVideoNotch"],
-                self._notch,
+                notch_gpu=notch_filter_gpu,
+                do_notch=self._notch,
                 move=int(self.options.chroma_offset),
             )
-            if not self._do_cafc
-            else data[: self.blocklen]
-        )
+            out_chroma = transfer_from_gpu(out_chroma_gpu)
+            del chroma_source_gpu, out_chroma_gpu
+        else:
+            # CAFC mode - use raw data
+            out_chroma = data[:self.blocklen]
         
         # Debug plotting (CPU)
         if self.debug_plot and self.debug_plot.is_plot_requested("magdens"):
@@ -718,26 +746,44 @@ class VHSRFDecodeGPU(VHSRFDecode):
         
         out_video05 = np.roll(out_video05, -self.Filters["F05_offset"])
         
-        # Chroma processing (CPU for now - needs data from original input)
+        # Chroma processing (GPU-accelerated)
         if profiler:
-            profiler.start("cpu_chroma_processing")
+            profiler.start("gpu_chroma_processing")
         
-        if data is None:
-            data = transfer_from_gpu(data_gpu)
-        
-        chroma_source = data if self.options.color_under else out_video
-        out_chroma = (
-            demod_chroma_filt(
-                chroma_source,
-                self.Filters["FVideoBurst"],
+        if not self._do_cafc:
+            # Determine chroma source (data for color_under, out_video otherwise)
+            if self.options.color_under:
+                # Need original data - ensure it's on GPU
+                chroma_source_gpu = data_gpu
+            else:
+                # Use demodulated video - transfer back to GPU
+                chroma_source_gpu = transfer_to_gpu(out_video)
+            
+            # GPU chroma demodulation and filtering
+            from vhsdecode.gpu_utils import demod_chroma_filt_gpu
+            
+            # Get frequency-domain notch filter if notch is enabled
+            notch_filter_gpu = None
+            if self._notch and "FVideoNotchF" in self.Filters_gpu:
+                notch_filter_gpu = self.Filters_gpu["FVideoNotchF"]
+            
+            out_chroma_gpu = demod_chroma_filt_gpu(
+                chroma_source_gpu,
+                self.Filters_gpu["FVideoBurst_freq"],  # Frequency-domain FIR
                 self.blocklen,
-                self.Filters["FVideoNotch"],
-                self._notch,
+                notch_gpu=notch_filter_gpu,  # Frequency-domain notch filter (or None)
+                do_notch=self._notch,
                 move=int(self.options.chroma_offset),
             )
-            if not self._do_cafc
-            else data[: self.blocklen]
-        )
+            
+            # Transfer result to CPU
+            out_chroma = transfer_from_gpu(out_chroma_gpu)
+            del out_chroma_gpu
+        else:
+            # CAFC mode - use original data directly
+            if data is None:
+                data = transfer_from_gpu(data_gpu)
+            out_chroma = data[: self.blocklen]
         
         if profiler:
             profiler.stop()
