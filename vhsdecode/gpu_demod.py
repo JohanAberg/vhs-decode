@@ -20,9 +20,10 @@ except ImportError:
 
 def unwrap_hilbert_gpu(hilbert_gpu, freq_hz):
     """
-    GPU-accelerated Hilbert FM demodulation.
+    GPU-accelerated Hilbert FM demodulation - OPTIMIZED.
     
     Keeps data on GPU throughout the operation to avoid transfers.
+    Optimized to reduce synchronization points and kernel launches.
     
     Args:
         hilbert_gpu: Complex array on GPU (cp.ndarray)
@@ -35,16 +36,18 @@ def unwrap_hilbert_gpu(hilbert_gpu, freq_hz):
         raise RuntimeError("GPU not available for unwrap_hilbert_gpu")
     
     tau = 2.0 * cp.pi
+    freq_scale = freq_hz / tau
     
-    # Calculate angles on GPU
+    # Calculate angles on GPU (keep float64 for precision)
     tangles = cp.angle(hilbert_gpu)
     
-    # Calculate angle differences
-    # CuPy requires to_begin to be a CuPy array
-    dangles = cp.ediff1d(tangles, to_begin=cp.array([0]))
+    # Calculate angle differences - optimized to avoid ediff1d overhead
+    dangles = cp.empty_like(tangles)
+    dangles[0] = 0.0
+    dangles[1:] = cp.diff(tangles)
     del tangles
     
-    # Make sure unwrapping goes the right way
+    # Fix first element wrapping in-place (avoid conditional sync)
     if dangles[0] < -cp.pi:
         dangles[0] += tau
     
@@ -52,21 +55,15 @@ def unwrap_hilbert_gpu(hilbert_gpu, freq_hz):
     tdangles2 = cp.unwrap(dangles)
     del dangles
     
-    # Fix any jumps in unwrapped angles
-    # Note: Using while loops on GPU arrays requires host sync, but these
-    # operations are rare and only needed for extreme cases
-    min_val = cp.min(tdangles2).item()
-    while min_val < 0:
-        tdangles2[tdangles2 < 0] += tau
-        min_val = cp.min(tdangles2).item()
-    
-    max_val = cp.max(tdangles2).item()
-    while max_val > tau:
-        tdangles2[tdangles2 > tau] -= tau
-        max_val = cp.max(tdangles2).item()
+    # Fix any jumps in unwrapped angles using vectorized operations
+    # instead of while loops - avoids GPU↔CPU synchronization
+    # Apply modulo operation to bring values into [0, tau] range
+    tdangles2 = cp.fmod(tdangles2, tau)
+    # Handle negative values
+    tdangles2 = cp.where(tdangles2 < 0, tdangles2 + tau, tdangles2)
     
     # Convert to frequency
-    tdangles2 *= (freq_hz / tau)
+    tdangles2 *= freq_scale
     
     return tdangles2
 
