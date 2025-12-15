@@ -6,6 +6,44 @@ priority: high
 
 # VHS-Decode AI Guide
 
+## Quick Start (Most Common Tasks)
+
+### 1. Running a Decode
+```bash
+# Always activate environment first
+.\.venv\Scripts\Activate.ps1
+
+# GPU decode (recommended)
+python decode.py vhs --system PAL --gpu --threads 2 input.u8 output
+
+# CPU decode
+python decode.py vhs --system PAL --threads 8 input.u8 output
+
+# Quick test (11 frames)
+python decode.py vhs --system PAL --gpu --length 11 sample_data/out2.u8 test
+```
+
+### 2. Profiling GPU Performance
+```bash
+.\.venv\Scripts\Activate.ps1
+python decode.py vhs --system PAL --gpu --gpu-profile --length 50 input.u8 output
+# Review GPU_OPTIMIZATION_ANALYSIS.md for bottleneck analysis
+```
+
+### 3. After Code Changes
+```bash
+.\.venv\Scripts\Activate.ps1
+pip install -e . --no-deps
+python decode.py vhs --gpu --length 11 sample_data/out2.u8 test  # Verify it works
+```
+
+### 4. Running Tests
+```bash
+.\.venv\Scripts\Activate.ps1
+pytest tests/test_gpu_unit.py -v                    # Quick GPU tests
+pytest tests/ -v                                     # Full test suite
+```
+
 ## Pipeline + Architecture
 - Raw 40 MSPS RF goes through 32K-131K overlap-save FFT blocks: RF bandpass → Hilbert → FM demod → video/chroma split → TBC writer (see vhsdecode/process.py).
 - `VHSRFDecode` handles per-block DSP; `VHSDecode` wraps system/tape presets; `DemodCache` in lddecode/core.py manages threaded block queues.
@@ -18,13 +56,29 @@ priority: high
 - CLI entry point decode.py dispatches to VHS/CVBS/HiFi decoders; keep option parsing/validation there and avoid duplicating flag logic inside decoders.
 - Benchmarks and regression metadata are stored under tests/benchmark_tracker.py and benchmark_results.json—update when changing performance-critical sections.
 
-## GPU Workflow (Phase 1 status Dec 15 2025 - FIXED)
+## GPU Workflow (Phase 2 status Dec 15 2025 - PROFILING ENABLED)
 - GPU acceleration working correctly after Dec 15 bug fixes: envelope filtering uses documented CPU path, ediff1d type errors resolved.
 - Achieves 1.5-2.5x speedup over CPU (6.5s vs 10.4s for 11 frames on RTX 4070 Ti); use 1-4 GPU threads vs 8 CPU threads for optimal performance.
 - Always offer CPU fallback (`use_gpu` flag, try/except cp.cuda.memory.OutOfMemoryError) and log degradations rather than raising.
 - Precision: keep FFT/filter work in FP32, but phase unwrap/chroma heterodyne/dropout logic stay FP64; assert tolerances at rtol=1e-4/atol=1e-4.
 - Document every GPU entry point with CPU equivalent, expected speedup, memory footprint, and linked tests (see GPU_PERFORMANCE_ANALYSIS.md and docs/GPU_USAGE.md).
 - **Known GPU limitations:** FEnvPost (IIR/SOS filter) runs on CPU - this is correct and documented, not a bug.
+
+### GPU Profiling (Added Dec 15 2025)
+- **Enable profiling:** Add `--gpu-profile` flag to any GPU decode command
+- **Output:** Detailed timing breakdown showing % time per operation + memory transfer stats
+- **Profiler class:** `GPUProfiler` in vhsdecode/gpu_utils.py tracks all GPU operations
+- **Current bottlenecks (as of Dec 15):**
+  - FM Demodulation: 46.2% of time (2.6ms/block) - **optimization target**
+  - Envelope Filter (CPU): 22.2% of time (1.3ms/block) - **needs GPU IIR implementation**
+  - Memory transfers: 18.8% combined (CPU→GPU 507MB, GPU→CPU 2366MB - 4.7x asymmetry)
+- **Documentation:** See GPU_OPTIMIZATION_ANALYSIS.md and GPU_PROFILING_GUIDE.md for details
+- **Usage pattern:**
+  ```bash
+  .\.venv\Scripts\Activate.ps1
+  python decode.py vhs --gpu --gpu-profile --length 50 --system PAL input.u8 output
+  # Prints profiling summary at end with timing breakdown
+  ```
 
 ## Tests, Fixtures, Benchmarks
 - Quick validation: `pytest tests/test_gpu_unit.py -v` and `pytest tests/test_gpu_regression.py -v`; full pipeline/perf: `pytest tests/test_gpu_integration.py tests/test_gpu_benchmark.py -v`.
@@ -33,11 +87,33 @@ priority: high
 - Performance failures (<2x speedup for FFT/chroma blocks) require profiling with `cp.cuda.profile()` or Nsight before merging.
 
 ## Build + CLI Usage
+
+### Python Environment Setup (Windows)
+- **Virtual Environment:** Project uses `.venv` located at workspace root
+- **Activation (PowerShell):**
+  ```powershell
+  .\.venv\Scripts\Activate.ps1
+  ```
+- **Activation (CMD):**
+  ```cmd
+  .venv\Scripts\activate.bat
+  ```
+- **Check Active:** Prompt shows `(.venv)` prefix when activated
+- **ALWAYS activate .venv before running any Python commands** (decode.py, tests, profiling, etc.)
+
+### Installation
 - Install via `pip install -e .` in dev mode; add CuPy for GPU: `pip install cupy-cuda12x` (CUDA 12) or `cupy-cuda11x` (CUDA 11).
+- After package changes, reinstall: `pip install -e . --no-deps` to pick up code changes.
+- Use LD/CVBS/HiFi sibling tools from the same repo; changes to shared lddecode modules must pass both VHS and LD pipelines.
+
+### Running Decodes
 - Decode command pattern: `python decode.py vhs input.r40 output --system PAL --threads 8` (CPU) or `--gpu --threads 2` (GPU).
 - GPU requires: NVIDIA GPU with CUDA 11+, CuPy installed, and fewer threads (1-4 optimal) than CPU mode.
 - Example commands:
   ```bash
+  # Activate environment first (REQUIRED)
+  .\.venv\Scripts\Activate.ps1
+  
   # CPU decode (8 threads)
   python decode.py vhs --system PAL --threads 8 input.r40 output
   
@@ -46,9 +122,10 @@ priority: high
   
   # Quick test (10 frames)
   python decode.py vhs --system PAL --length 10 input.r40 test
+  
+  # GPU with profiling (for optimization work)
+  python decode.py vhs --system PAL --gpu --gpu-profile --length 50 input.u8 output
   ```
-- After package changes, reinstall: `pip install -e . --no-deps` to pick up code changes.
-- Use LD/CVBS/HiFi sibling tools from the same repo; changes to shared lddecode modules must pass both VHS and LD pipelines.
 
 ## Data & Debugging Tips
 - Reference captures for README/test screenshots are under assets/ and tests/fixtures; update both when adjusting decoding defaults.
@@ -287,8 +364,9 @@ filtered = signal.sosfiltfilt(sos_filter, data)  # CPU only for now
 **Critical GPU Knowledge:**
 - IIR/SOS filters (like FEnvPost) cannot be used with FFT multiplication - use CPU `sosfiltfilt`
 - CuPy parameter types must match (arrays for array params, not Python scalars)
-- Always test with: `python decode.py vhs --gpu --length 11 sample.r40 test` - should show zero errors
+- Always test with: `.\.venv\Scripts\Activate.ps1; python decode.py vhs --gpu --length 11 sample_data/out2.u8 test` - should show zero errors
 - After code changes: `pip install -e . --no-deps` then test immediately
+- **Always activate .venv first** before any Python operations
 
 **Architecture Understanding:**
 - Master the block-based FFT pipeline
@@ -296,9 +374,17 @@ filtered = signal.sosfiltfilt(sos_filter, data)  # CPU only for now
 - Know the signal processing flow from RF to TBC
 - Know which filters are FIR (FFT-compatible) vs IIR (time-domain only)
 
+**GPU Profiling & Optimization:**
+- Use `--gpu-profile` flag to identify bottlenecks before optimizing
+- Current targets: FM demod (46%), Envelope filter (22%), Memory transfers (19%)
+- Expected gains: 2.8-4x speedup possible with targeted optimization
+- See GPU_OPTIMIZATION_ANALYSIS.md for detailed action plan
+
 **Documentation:**
 - Usage guide: [docs/DECODER_USAGE.md](docs/DECODER_USAGE.md)
 - GPU setup: [docs/GPU_USAGE.md](docs/GPU_USAGE.md)
 - Bug fixes: [GPU_BUG_FIX_SUMMARY.md](GPU_BUG_FIX_SUMMARY.md)
+- **Profiling guide: [GPU_PROFILING_GUIDE.md](GPU_PROFILING_GUIDE.md)** ← Use this for optimization work
+- **Optimization targets: [GPU_OPTIMIZATION_ANALYSIS.md](GPU_OPTIMIZATION_ANALYSIS.md)** ← Roadmap for speedups
 
 Following these guidelines ensures both GPU acceleration and general development are correct, fast, and maintainable.

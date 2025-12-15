@@ -343,6 +343,14 @@ def main(args=None, use_gui=False):
         action="store_false",
         help="Disable Phase 2 transfer optimizations (use Phase 1 implementation).",
     )
+    gpu_group.add_argument(
+        "--gpu-profile",
+        dest="gpu_profile",
+        action="store_true",
+        default=False,
+        help="Enable GPU profiling to measure performance of different operations. "
+             "Prints detailed timing breakdown at end of decode.",
+    )
 
     args = parser.parse_args(args)
 
@@ -437,6 +445,7 @@ def main(args=None, use_gui=False):
     extra_options["use_gpu"] = args.use_gpu
     extra_options["gpu_id"] = args.gpu_id
     extra_options["optimize_transfers"] = args.optimize_transfers
+    extra_options["enable_profiling"] = args.gpu_profile
 
     # Wrap the LDdecode creation so that the signal handler is not taken by sub-threads,
     # allowing SIGINT/control-C's to be handled cleanly
@@ -539,6 +548,15 @@ def main(args=None, use_gui=False):
         )
     else:
         print(f"\nCompleted without handling any frames.", file=sys.stderr)
+
+    # Print GPU profiling summary if enabled
+    if args.gpu_profile and args.use_gpu:
+        try:
+            vhsd.rf.print_profiling_summary()
+        except (AttributeError, Exception) as e:
+            import traceback
+            logger.warning(f"Could not print GPU profiling summary: {e}")
+            traceback.print_exc()
 
     cleanup()
     sys.exit(0)

@@ -21,7 +21,8 @@ from vhsdecode.gpu_utils import (
     transfer_from_gpu,
     free_gpu_memory,
     GPUError,
-    GPUOutOfMemoryError
+    GPUOutOfMemoryError,
+    get_profiler
 )
 
 logger = logging.getLogger(__name__)
@@ -67,6 +68,10 @@ class VHSRFDecodeGPU(VHSRFDecode):
             optimize_transfers: Use Phase 2 optimizations to reduce CPU↔GPU transfers
             **kwargs: All other arguments passed to VHSRFDecode
         """
+        # Extract extra_options for profiling before calling super().__init__
+        extra_options = kwargs.get('extra_options', {})
+        self.enable_profiling = extra_options.get('enable_profiling', False)
+        
         # Initialize parent class first
         super().__init__(*args, **kwargs)
         
@@ -81,6 +86,12 @@ class VHSRFDecodeGPU(VHSRFDecode):
                 "Falling back to CPU. Install CuPy: pip install cupy-cuda11x or cupy-cuda12x"
             )
             self.use_gpu = False
+        
+        # Initialize profiler if profiling is enabled
+        if self.enable_profiling and self.use_gpu:
+            from vhsdecode.gpu_utils import enable_profiling
+            enable_profiling()
+            logger.info("GPU profiling enabled")
         
         if self.use_gpu:
             self._setup_gpu()
@@ -432,20 +443,37 @@ class VHSRFDecodeGPU(VHSRFDecode):
         rv = {}
         demod_start_time = time.time()
         
+        # Get profiler if profiling enabled
+        profiler = get_profiler() if hasattr(self, 'enable_profiling') and self.enable_profiling else None
+        
         # === TRANSFER 1: Input data to GPU ===
+        if profiler:
+            profiler.start("1_data_transfer_to_gpu")
+        
         if fftdata is not None:
             indata_fft_gpu = transfer_to_gpu(fftdata) if not isinstance(fftdata, cp.ndarray) else fftdata
+            if profiler and not isinstance(fftdata, cp.ndarray):
+                profiler.record_transfer('cpu_to_gpu', fftdata.nbytes)
             # Reconstruct data on GPU if needed later
             if data is None:
                 data_gpu = cp.fft.ifft(indata_fft_gpu).real
         elif data is not None:
             data_gpu = transfer_to_gpu(data[:self.blocklen])
+            if profiler:
+                profiler.record_transfer('cpu_to_gpu', data[:self.blocklen].nbytes)
             indata_fft_gpu = cp.fft.fft(data_gpu)
         else:
             raise Exception("demodblock called without raw or FFT data")
         
+        if profiler:
+            profiler.stop()
+            profiler.update_memory()
+        
         # All processing now happens on GPU
         # Apply notch filter if needed (GPU)
+        if profiler:
+            profiler.start("2_notch_and_rf_filters")
+        
         if self._notch is not None:
             notch_filter_gpu = self.Filters_gpu["FVideoNotchF"]
             indata_fft_gpu *= notch_filter_gpu
@@ -454,24 +482,52 @@ class VHSRFDecodeGPU(VHSRFDecode):
         rf_filter_gpu = self.Filters_gpu["RFVideo"]
         indata_fft_gpu *= rf_filter_gpu
         
+        if profiler:
+            profiler.stop()
+        
         # Hilbert envelope calculation (GPU)
+        if profiler:
+            profiler.start("3_hilbert_ifft")
+        
         hilbert_filter_gpu = self.Filters_gpu["hilbert"]
         raw_filtered_gpu = cp.fft.ifft(indata_fft_gpu * hilbert_filter_gpu).real
         
+        if profiler:
+            profiler.stop()
+            profiler.update_memory()
+        
         # Calculate envelope on GPU
+        if profiler:
+            profiler.start("4_envelope_calculation")
+        
         cp.abs(raw_filtered_gpu, out=raw_filtered_gpu)
         raw_env_gpu = cp.roll(raw_filtered_gpu, 4)
         del raw_filtered_gpu
         
+        if profiler:
+            profiler.stop()
+        
         # Envelope filtering - FEnvPost is IIR (SOS format) which requires time-domain
         # application. GPU doesn't have efficient SOS filtering yet, so use CPU.
         # This is faster than attempting GPU and falling back every time.
+        if profiler:
+            profiler.start("5_envelope_filter_cpu")
+        
         env = np.array(transfer_from_gpu(raw_env_gpu))
+        if profiler:
+            profiler.record_transfer('gpu_to_cpu', raw_env_gpu.nbytes)
+        
         from vhsdecode import utils
         env = utils.filter_simple(env, self.Filters["FEnvPost"]).astype(np.single)
         env_mean = np.mean(env)
         env_gpu = transfer_to_gpu(env)
+        if profiler:
+            profiler.record_transfer('cpu_to_gpu', env.nbytes)
+        
         del raw_env_gpu
+        
+        if profiler:
+            profiler.stop()
         
         # High boost processing (GPU)
         if len(cp.where(env_gpu == 0)[0]) == 0:
@@ -489,6 +545,9 @@ class VHSRFDecodeGPU(VHSRFDecode):
             logger.warning("RF signal is weak. Is your deck tracking properly?")
         
         # Hilbert transform and FM demodulation (GPU) - Phase 2 optimization
+        if profiler:
+            profiler.start("6_fm_demodulation")
+        
         hilbert_gpu = cp.fft.ifft(indata_fft_gpu * hilbert_filter_gpu)
         
         try:
@@ -498,9 +557,17 @@ class VHSRFDecodeGPU(VHSRFDecode):
             logger.warning(f"GPU FM demod failed: {e}, using CPU fallback")
             from vhsdecode.demod import unwrap_hilbert
             hilbert_cpu = transfer_from_gpu(hilbert_gpu)
+            if profiler:
+                profiler.record_transfer('gpu_to_cpu', hilbert_gpu.nbytes)
             demod_gpu = transfer_to_gpu(unwrap_hilbert(hilbert_cpu, self.freq_hz).real)
+            if profiler:
+                profiler.record_transfer('cpu_to_gpu', demod_gpu.nbytes)
         
         del hilbert_gpu
+        
+        if profiler:
+            profiler.stop()
+            profiler.update_memory()
         
         # Differential demod for spike handling (GPU) - Phase 2 optimization
         if not self._disable_diff_demod:
@@ -608,9 +675,16 @@ class VHSRFDecodeGPU(VHSRFDecode):
         del demod_fft_gpu
         
         # === TRANSFER 2: Transfer final results back to CPU ===
+        if profiler:
+            profiler.start("7_final_transfer_to_cpu")
+        
         out_video = transfer_from_gpu(out_video_gpu)
         out_video05 = transfer_from_gpu(out_video05_gpu)
         env = transfer_from_gpu(env_gpu)
+        
+        if profiler:
+            profiler.record_transfer('gpu_to_cpu', out_video_gpu.nbytes + out_video05_gpu.nbytes + env_gpu.nbytes)
+            profiler.stop()
         
         del out_video_gpu, out_video05_gpu, env_gpu
         
@@ -664,6 +738,12 @@ class VHSRFDecodeGPU(VHSRFDecode):
             rv["demod_time"] = demod_end_time - demod_start_time
         
         return rv
+    
+    def print_profiling_summary(self):
+        """Print profiling summary if profiling was enabled."""
+        if self.enable_profiling:
+            profiler = get_profiler()
+            profiler.print_summary()
     
     def cleanup(self):
         """
