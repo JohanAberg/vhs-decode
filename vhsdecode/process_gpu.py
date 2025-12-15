@@ -272,6 +272,113 @@ class VHSRFDecodeGPU(VHSRFDecode):
             logger.error(f"GPU demodblock failed: {e}, falling back to CPU")
             free_gpu_memory()
             return super().demodblock(data, mtf_level, fftdata, cut, thread_benchmark)
+    
+    def demodblock_gpu_only(self, data_gpu, mtf_level=0, cut=False):
+        """
+        Process a block entirely on GPU without CPU transfers.
+        
+        This method is designed for batch processing where data is already on GPU
+        and results should stay on GPU until the entire batch is complete.
+        
+        Args:
+            data_gpu: RF data already on GPU (cp.ndarray)
+            mtf_level: MTF level for processing
+            cut: Whether to apply cut filter
+            
+        Returns:
+            dict: Result dictionary with GPU arrays (not transferred to CPU)
+            
+        Note: This is a simplified version of _demodblock_gpu_optimized that:
+        - Accepts data already on GPU
+        - Returns results on GPU (caller handles transfer)
+        - Used by BatchProcessor for efficient batch processing
+        """
+        # Lazy initialize filters
+        self._lazy_init_filters()
+        
+        if not self.use_gpu or self.Filters_gpu is None:
+            raise GPUError("GPU not ready for demodblock_gpu_only")
+        
+        # Ensure data is on GPU
+        if not isinstance(data_gpu, cp.ndarray):
+            data_gpu = cp.asarray(data_gpu)
+        
+        # Take only blocklen samples
+        data_gpu = data_gpu[:self.blocklen]
+        
+        # FFT
+        indata_fft_gpu = cp.fft.fft(data_gpu)
+        
+        # Apply notch filter if needed
+        if self._notch is not None:
+            indata_fft_gpu *= self.Filters_gpu["FVideoNotchF"]
+        
+        # Apply RF filter
+        indata_fft_gpu *= self.Filters_gpu["RFVideo"]
+        
+        # Hilbert envelope
+        hilbert_gpu = indata_fft_gpu * self.Filters_gpu["hilbert"]
+        raw_filtered_gpu = cp.fft.ifft(hilbert_gpu).real
+        
+        # Envelope calculation
+        raw_env_gpu = cp.abs(raw_filtered_gpu)
+        raw_env_gpu = cp.roll(raw_env_gpu, 4)
+        
+        # Envelope filtering (FIR via FFT)
+        env_fft_gpu = cp.fft.rfft(raw_env_gpu)
+        env_filtered_fft_gpu = env_fft_gpu * self.Filters_gpu["FEnvPost_FIR_freq"]
+        env_gpu = cp.fft.irfft(env_filtered_fft_gpu).real[:self.blocklen]
+        
+        # FM demodulation (GPU)
+        from vhsdecode.gpu_demod import unwrap_hilbert_gpu
+        
+        hilbert_complex_gpu = cp.fft.ifft(hilbert_gpu)
+        demod_gpu = unwrap_hilbert_gpu(hilbert_complex_gpu, self.freq_hz)
+        
+        # Spike replacement (GPU)
+        from vhsdecode.gpu_demod import replace_spikes_gpu
+        
+        demod_gpu = replace_spikes_gpu(
+            demod_gpu, 
+            env_gpu,
+            self.DecoderParams["video_lpf_freq"],
+            self.freq_hz
+        )
+        
+        # Video filtering
+        video_lpf_gpu = self.Filters_gpu["Fvideo_lpf"]
+        demod_fft_gpu = cp.fft.rfft(demod_gpu)
+        video_fft_gpu = demod_fft_gpu * video_lpf_gpu
+        video_gpu = cp.fft.irfft(video_fft_gpu).real[:self.blocklen]
+        
+        # Chroma processing (if applicable)
+        # For now, keep simple and return video only
+        # Full chroma processing can be added later if needed
+        
+        # Return result on GPU (caller handles transfer)
+        return {
+            'video': video_gpu,
+            'envelope': env_gpu,
+            'demod': demod_gpu,
+        }
+    
+    def _demodblock_cpu_fallback(self, data, mtf_level=0, cut=False):
+        """
+        CPU fallback for batch processing failures.
+        
+        This method provides a simple fallback to CPU processing when GPU
+        batch processing fails for a specific block.
+        
+        Args:
+            data: RF data on CPU (numpy array)
+            mtf_level: MTF level for processing
+            cut: Whether to apply cut filter
+            
+        Returns:
+            Result dictionary from CPU processing
+        """
+        logger.warning("Falling back to CPU for single block in batch")
+        return super().demodblock(data, mtf_level, fftdata=None, cut=cut)
 
     def _demodblock_gpu_batch(self, current_data, stolen_items, mtf_level, cut):
         """Batched GPU processing."""
