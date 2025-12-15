@@ -72,6 +72,7 @@ class VHSRFDecodeGPU(VHSRFDecode):
         # Extract extra_options for profiling before calling super().__init__
         extra_options = kwargs.get('extra_options', {})
         self.enable_profiling = extra_options.get('enable_profiling', False)
+        use_fused_fm_kernel = extra_options.get('use_fused_fm_kernel', True)
         
         # Initialize parent class first
         super().__init__(*args, **kwargs)
@@ -80,6 +81,15 @@ class VHSRFDecodeGPU(VHSRFDecode):
         self.use_gpu = use_gpu and GPU_AVAILABLE
         self.gpu_id = gpu_id
         self.optimize_transfers = optimize_transfers
+        
+        # Set global flag for fused FM kernel (Phase 4 optimization)
+        if self.use_gpu and GPU_AVAILABLE:
+            import vhsdecode.gpu_demod as gpu_demod_module
+            gpu_demod_module.USE_FUSED_FM_KERNEL = use_fused_fm_kernel
+            if use_fused_fm_kernel:
+                logger.info("Fused FM demodulation kernel enabled (Phase 4)")
+            else:
+                logger.info("Fused FM kernel disabled (using separate operations)")
         
         if not GPU_AVAILABLE and use_gpu:
             logger.warning(
@@ -100,10 +110,14 @@ class VHSRFDecodeGPU(VHSRFDecode):
             logger.info(f"GPU acceleration enabled on device {self.gpu_id} ({mode} mode)")
         else:
             logger.info("GPU acceleration disabled, using CPU")
+        
         # Internal batching support
         self.cache = None
         self.batch_cache = {}
-        self.batch_size = 8  # Configurable batch size
+        # batch_size already set in _setup_gpu() based on available VRAM
+        
+        # Initialize batch processor (will be used by DemodCache if batch processing enabled)
+        self.batch_processor = None
     
     def set_cache(self, cache):
         """Set the DemodCache instance for internal batching."""
@@ -144,6 +158,32 @@ class VHSRFDecodeGPU(VHSRFDecode):
             logger.info(f"Using GPU: {device_name}")
             logger.info(f"VRAM: {device.mem_info[1]/1e9:.2f} GB total, "
                        f"{device.mem_info[0]/1e9:.2f} GB free")
+            
+            # Pre-allocate GPU memory pools for better performance
+            # Calculate batch size based on available memory
+            mem_total_gb = device.mem_info[1] / 1e9
+            mem_free_gb = device.mem_info[0] / 1e9
+            
+            # Use aggressive batching to maximize VRAM usage
+            # Target: Use 20-30% of available VRAM for memory pools
+            target_vram_gb = min(mem_free_gb * 0.25, 3.0)  # Cap at 3GB for safety
+            
+            # Calculate optimal batch size
+            # Estimate: ~2MB per block, so 1GB can handle ~500 blocks
+            estimated_mb_per_block = 2.0
+            optimal_batch_size = int((target_vram_gb * 1000) / estimated_mb_per_block)
+            optimal_batch_size = max(10, min(optimal_batch_size, 100))  # Clamp to 10-100
+            
+            from vhsdecode.gpu_utils import setup_gpu_memory_pools
+            setup_gpu_memory_pools(
+                blocklen=self.blocklen,
+                batch_size=optimal_batch_size,
+                target_vram_usage_gb=target_vram_gb
+            )
+            
+            # Update batch size for internal batching
+            self.batch_size = optimal_batch_size
+            logger.info(f"Configured for batch processing: {optimal_batch_size} blocks per batch")
             
             # Lazy filter conversion: defer to first block processing
             # This avoids blocking during initialization
@@ -246,6 +286,113 @@ class VHSRFDecodeGPU(VHSRFDecode):
             logger.error(f"GPU demodblock failed: {e}, falling back to CPU")
             free_gpu_memory()
             return super().demodblock(data, mtf_level, fftdata, cut, thread_benchmark)
+    
+    def demodblock_gpu_only(self, data_gpu, mtf_level=0, cut=False):
+        """
+        Process a block entirely on GPU without CPU transfers.
+        
+        This method is designed for batch processing where data is already on GPU
+        and results should stay on GPU until the entire batch is complete.
+        
+        Args:
+            data_gpu: RF data already on GPU (cp.ndarray)
+            mtf_level: MTF level for processing
+            cut: Whether to apply cut filter
+            
+        Returns:
+            dict: Result dictionary with GPU arrays (not transferred to CPU)
+            
+        Note: This is a simplified version of _demodblock_gpu_optimized that:
+        - Accepts data already on GPU
+        - Returns results on GPU (caller handles transfer)
+        - Used by BatchProcessor for efficient batch processing
+        """
+        # Lazy initialize filters
+        self._lazy_init_filters()
+        
+        if not self.use_gpu or self.Filters_gpu is None:
+            raise GPUError("GPU not ready for demodblock_gpu_only")
+        
+        # Ensure data is on GPU
+        if not isinstance(data_gpu, cp.ndarray):
+            data_gpu = cp.asarray(data_gpu)
+        
+        # Take only blocklen samples
+        data_gpu = data_gpu[:self.blocklen]
+        
+        # FFT
+        indata_fft_gpu = cp.fft.fft(data_gpu)
+        
+        # Apply notch filter if needed
+        if self._notch is not None:
+            indata_fft_gpu *= self.Filters_gpu["FVideoNotchF"]
+        
+        # Apply RF filter
+        indata_fft_gpu *= self.Filters_gpu["RFVideo"]
+        
+        # Hilbert envelope
+        hilbert_gpu = indata_fft_gpu * self.Filters_gpu["hilbert"]
+        raw_filtered_gpu = cp.fft.ifft(hilbert_gpu).real
+        
+        # Envelope calculation
+        raw_env_gpu = cp.abs(raw_filtered_gpu)
+        raw_env_gpu = cp.roll(raw_env_gpu, 4)
+        
+        # Envelope filtering (FIR via FFT)
+        env_fft_gpu = cp.fft.rfft(raw_env_gpu)
+        env_filtered_fft_gpu = env_fft_gpu * self.Filters_gpu["FEnvPost_FIR_freq"]
+        env_gpu = cp.fft.irfft(env_filtered_fft_gpu).real[:self.blocklen]
+        
+        # FM demodulation (GPU)
+        from vhsdecode.gpu_demod import unwrap_hilbert_gpu
+        
+        hilbert_complex_gpu = cp.fft.ifft(hilbert_gpu)
+        demod_gpu = unwrap_hilbert_gpu(hilbert_complex_gpu, self.freq_hz)
+        
+        # Spike replacement (GPU)
+        from vhsdecode.gpu_demod import replace_spikes_gpu
+        
+        demod_gpu = replace_spikes_gpu(
+            demod_gpu, 
+            env_gpu,
+            self.DecoderParams["video_lpf_freq"],
+            self.freq_hz
+        )
+        
+        # Video filtering
+        video_lpf_gpu = self.Filters_gpu["Fvideo_lpf"]
+        demod_fft_gpu = cp.fft.rfft(demod_gpu)
+        video_fft_gpu = demod_fft_gpu * video_lpf_gpu
+        video_gpu = cp.fft.irfft(video_fft_gpu).real[:self.blocklen]
+        
+        # Chroma processing (if applicable)
+        # For now, keep simple and return video only
+        # Full chroma processing can be added later if needed
+        
+        # Return result on GPU (caller handles transfer)
+        return {
+            'video': video_gpu,
+            'envelope': env_gpu,
+            'demod': demod_gpu,
+        }
+    
+    def _demodblock_cpu_fallback(self, data, mtf_level=0, cut=False):
+        """
+        CPU fallback for batch processing failures.
+        
+        This method provides a simple fallback to CPU processing when GPU
+        batch processing fails for a specific block.
+        
+        Args:
+            data: RF data on CPU (numpy array)
+            mtf_level: MTF level for processing
+            cut: Whether to apply cut filter
+            
+        Returns:
+            Result dictionary from CPU processing
+        """
+        logger.warning("Falling back to CPU for single block in batch")
+        return super().demodblock(data, mtf_level, fftdata=None, cut=cut)
 
     def _demodblock_gpu_batch(self, current_data, stolen_items, mtf_level, cut):
         """Batched GPU processing."""

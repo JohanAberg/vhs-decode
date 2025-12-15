@@ -19,12 +19,31 @@ except ImportError:
 
 from vhsdecode.gpu_utils import get_active_profiler
 
+# Flag to enable fused FM demodulation kernel (Phase 4 optimization)
+USE_FUSED_FM_KERNEL = True
+
+# Try to import fused kernel
+_fused_fm_available = False
+try:
+    from vhsdecode.cuda_kernels.fused_fm_demod import (
+        unwrap_hilbert_gpu_fused,
+        is_fused_kernel_available
+    )
+    if GPU_AVAILABLE:
+        _fused_fm_available = is_fused_kernel_available()
+        if _fused_fm_available:
+            logger.info("Fused FM demodulation kernel available (Phase 4 optimization)")
+except Exception as e:
+    logger.debug(f"Fused FM kernel not available: {e}")
+
 def unwrap_hilbert_gpu(hilbert_gpu, freq_hz):
     """
     GPU-accelerated Hilbert FM demodulation - OPTIMIZED.
     
+    Automatically uses fused CUDA kernel (Phase 4) if available, otherwise
+    falls back to separate CuPy operations (Phase 2).
+    
     Keeps data on GPU throughout the operation to avoid transfers.
-    Optimized to reduce synchronization points and kernel launches.
     
     Args:
         hilbert_gpu: Complex array on GPU (cp.ndarray)
@@ -38,6 +57,18 @@ def unwrap_hilbert_gpu(hilbert_gpu, freq_hz):
     
     profiler = get_active_profiler()
     
+    # Try fused kernel first (Phase 4 optimization)
+    if USE_FUSED_FM_KERNEL and _fused_fm_available:
+        try:
+            if profiler: profiler.start("6_fm_demod_fused")
+            result = unwrap_hilbert_gpu_fused(hilbert_gpu, freq_hz)
+            if profiler: profiler.stop()
+            return result
+        except Exception as e:
+            logger.warning(f"Fused FM kernel failed, falling back to separate operations: {e}")
+            # Fall through to separate operations
+    
+    # Fallback: Separate operations (Phase 2 implementation)
     tau = 2.0 * cp.pi
     freq_scale = freq_hz / tau
     

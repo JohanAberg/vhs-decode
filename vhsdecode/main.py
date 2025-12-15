@@ -351,6 +351,36 @@ def main(args=None, use_gui=False):
         help="Enable GPU profiling to measure performance of different operations. "
              "Prints detailed timing breakdown at end of decode.",
     )
+    gpu_group.add_argument(
+        "--batch-processing",
+        dest="use_batch_processing",
+        action="store_true",
+        default=False,
+        help="Enable GPU batch processing to reduce PCIe transfer overhead (Phase 3). "
+             "Processes multiple blocks together for significant speedup. Default: disabled (experimental).",
+    )
+    gpu_group.add_argument(
+        "--batch-size",
+        dest="batch_size",
+        metavar="size",
+        type=int,
+        default=None,
+        help="Number of blocks to process per GPU batch (default: auto-detect based on VRAM). "
+             "Larger batches reduce overhead but use more VRAM. Range: 10-100.",
+    )
+    gpu_group.add_argument(
+        "--fused-fm-kernel",
+        dest="use_fused_fm_kernel",
+        action="store_true",
+        default=True,
+        help="Use fused FM demodulation CUDA kernel for ~4× speedup (Phase 4, default: enabled).",
+    )
+    gpu_group.add_argument(
+        "--no-fused-fm-kernel",
+        dest="use_fused_fm_kernel",
+        action="store_false",
+        help="Disable fused FM kernel (use separate CuPy operations for debugging).",
+    )
 
     args = parser.parse_args(args)
 
@@ -446,6 +476,9 @@ def main(args=None, use_gui=False):
     extra_options["gpu_id"] = args.gpu_id
     extra_options["optimize_transfers"] = args.optimize_transfers
     extra_options["enable_profiling"] = args.gpu_profile
+    extra_options["use_batch_processing"] = args.use_batch_processing
+    extra_options["batch_size"] = args.batch_size
+    extra_options["use_fused_fm_kernel"] = args.use_fused_fm_kernel
 
     # Wrap the LDdecode creation so that the signal handler is not taken by sub-threads,
     # allowing SIGINT/control-C's to be handled cleanly

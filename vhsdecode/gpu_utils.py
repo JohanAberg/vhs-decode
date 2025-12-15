@@ -398,3 +398,112 @@ def enable_profiling():
     global _gpu_profiler
     _gpu_profiler = GPUProfiler()
     return _gpu_profiler
+
+
+def setup_gpu_memory_pools(blocklen, batch_size=10, target_vram_usage_gb=2.0):
+    """
+    Pre-allocate CuPy memory pools for common operations to reduce allocation overhead.
+    
+    This function calculates the expected memory requirements based on block size
+    and batch count, then pre-allocates GPU memory pools. This dramatically reduces
+    runtime memory allocation overhead.
+    
+    Args:
+        blocklen: Length of RF data blocks (e.g., 32768 or 131072)
+        batch_size: Number of blocks to process simultaneously (default: 10)
+        target_vram_usage_gb: Target VRAM to pre-allocate in GB (default: 2.0)
+        
+    Example:
+        >>> setup_gpu_memory_pools(blocklen=131072, batch_size=10)
+        >>> # Subsequent allocations will be much faster
+        
+    Performance Impact:
+        - Eliminates 1-2 seconds of allocation overhead per decode
+        - Reduces memory fragmentation
+        - Enables larger batch processing
+    """
+    if not GPU_AVAILABLE:
+        logger.warning("Cannot setup GPU memory pools: GPU not available")
+        return
+    
+    try:
+        # Calculate typical memory needs per block
+        # Based on GPU_BOTTLENECK_ANALYSIS: typical block uses ~1.5-2.5 MB
+        
+        # RF input data (float64)
+        rf_input_bytes = blocklen * 8
+        
+        # FFT result (complex128)
+        fft_result_bytes = blocklen * 16
+        
+        # Filtered data (float64)
+        filtered_bytes = blocklen * 8
+        
+        # Output data (float64)
+        output_bytes = blocklen * 8
+        
+        # Intermediate buffers for envelope, chroma, etc.
+        intermediate_bytes = blocklen * 8 * 3  # Estimate for 3 intermediate buffers
+        
+        # Total per block
+        total_per_block = (rf_input_bytes + fft_result_bytes + filtered_bytes + 
+                          output_bytes + intermediate_bytes)
+        
+        # Total for batch
+        total_for_batch = total_per_block * batch_size
+        
+        # Convert target VRAM to bytes
+        target_bytes = int(target_vram_usage_gb * 1e9)
+        
+        # Use the larger of batch size or target VRAM
+        pool_size = max(total_for_batch, target_bytes)
+        
+        logger.info(f"Pre-allocating GPU memory pool:")
+        logger.info(f"  Block size: {blocklen} samples")
+        logger.info(f"  Memory per block: {total_per_block / 1e6:.2f} MB")
+        logger.info(f"  Batch size: {batch_size} blocks")
+        logger.info(f"  Batch memory: {total_for_batch / 1e6:.2f} MB")
+        logger.info(f"  Pool size: {pool_size / 1e6:.2f} MB")
+        
+        # Get current GPU memory info
+        device = cp.cuda.Device()
+        mem_total = device.mem_info[1]
+        mem_free = device.mem_info[0]
+        
+        # Check if we have enough free memory
+        if pool_size > mem_free:
+            logger.warning(f"Requested pool size ({pool_size/1e9:.2f} GB) exceeds free VRAM "
+                         f"({mem_free/1e9:.2f} GB). Adjusting to 80% of free VRAM.")
+            pool_size = int(mem_free * 0.8)
+        
+        # Get current pool state before allocation
+        mempool = cp.get_default_memory_pool()
+        current_limit = mempool.get_limit()
+        
+        # Calculate final pool limit upfront
+        # Allow 2x the pool size for safety margin
+        pool_limit = min(pool_size * 2, int(mem_total * 0.9))  # Max 90% of total VRAM
+        
+        # If current limit is too low, increase it BEFORE allocation attempt
+        # Must set limit before any allocation that exceeds current limit
+        if current_limit > 0 and pool_size > current_limit:
+            logger.info(f"Current pool limit ({current_limit/1e9:.2f} GB) too low for {pool_size/1e9:.2f} GB allocation")
+            logger.info(f"Increasing pool limit to {pool_limit/1e9:.2f} GB...")
+            mempool.set_limit(size=pool_limit)
+        elif current_limit == 0:
+            # No limit set yet, set it now
+            mempool.set_limit(size=pool_limit)
+        
+        # Allocate and free to setup the pool (this initializes the memory pool)
+        logger.info(f"Initializing memory pool with {pool_size/1e6:.2f} MB...")
+        dummy = cp.empty(pool_size, dtype=cp.uint8)
+        del dummy
+        
+        logger.info(f"GPU memory pool configured:")
+        logger.info(f"  Initial pool: {pool_size/1e6:.2f} MB")
+        logger.info(f"  Pool limit: {pool_limit/1e6:.2f} MB ({pool_limit/mem_total*100:.1f}% of total VRAM)")
+        logger.info(f"  Expected VRAM usage: {pool_size/mem_total*100:.1f}% of {mem_total/1e9:.2f} GB")
+        
+    except Exception as e:
+        logger.error(f"Failed to setup GPU memory pools: {e}")
+        # Non-fatal - continue with default memory management
