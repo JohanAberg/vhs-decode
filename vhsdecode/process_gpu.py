@@ -100,10 +100,14 @@ class VHSRFDecodeGPU(VHSRFDecode):
             logger.info(f"GPU acceleration enabled on device {self.gpu_id} ({mode} mode)")
         else:
             logger.info("GPU acceleration disabled, using CPU")
+        
         # Internal batching support
         self.cache = None
         self.batch_cache = {}
-        self.batch_size = 8  # Configurable batch size
+        # batch_size already set in _setup_gpu() based on available VRAM
+        
+        # Initialize batch processor (will be used by DemodCache if batch processing enabled)
+        self.batch_processor = None
     
     def set_cache(self, cache):
         """Set the DemodCache instance for internal batching."""

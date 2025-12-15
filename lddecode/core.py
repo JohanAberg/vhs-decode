@@ -953,6 +953,8 @@ class DemodCache:
         cachesize=256,
         num_worker_threads=6,
         MTF_tolerance=0.05,
+        use_batch_processing=False,
+        batch_size=10,
     ):
         self.infile = infile
         self.loader = loader
@@ -989,14 +991,52 @@ class DemodCache:
         self.ended           = False
 
         self.deqeue_thread      = threading.Thread(target=self.dequeue, daemon=True)
-        self.num_worker_threads = num_worker_threads
-
-        for i in range(num_worker_threads):
-            t = threading.Thread(
-                target=self.worker, daemon=True, args=()
-            )
-            t.start()
-            self.threads.append(t)
+        
+        # Check if we should use batch processing
+        self.use_batch_processing = use_batch_processing
+        self.batch_size = batch_size
+        
+        # Determine if GPU batch processing is available and should be used
+        use_gpu_batch = (use_batch_processing and 
+                        hasattr(rf, 'use_gpu') and rf.use_gpu and
+                        hasattr(rf, 'batch_size'))
+        
+        if use_gpu_batch:
+            # GPU batch mode: single worker with batch processing
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.info(f"Using GPU batch processing: batch_size={batch_size}, worker_threads=1")
+            
+            self.num_worker_threads = 1
+            
+            # Initialize batch processor if not already done
+            if not hasattr(rf, 'batch_processor') or rf.batch_processor is None:
+                try:
+                    from vhsdecode.gpu_batch_processor import BatchProcessor
+                    rf.batch_processor = BatchProcessor(rf, batch_size=batch_size)
+                    logger.info(f"Initialized BatchProcessor with batch_size={batch_size}")
+                except Exception as e:
+                    logger.error(f"Failed to initialize BatchProcessor: {e}, falling back to standard mode")
+                    use_gpu_batch = False
+                    self.num_worker_threads = num_worker_threads
+            
+            if use_gpu_batch:
+                t = threading.Thread(
+                    target=self.gpu_batch_worker, daemon=True, args=(batch_size,)
+                )
+                t.start()
+                self.threads.append(t)
+        
+        if not use_gpu_batch:
+            # Standard mode: multiple workers
+            self.num_worker_threads = num_worker_threads
+            
+            for i in range(num_worker_threads):
+                t = threading.Thread(
+                    target=self.worker, daemon=True, args=()
+                )
+                t.start()
+                self.threads.append(t)
 
         self.deqeue_thread.start()
 
@@ -1088,6 +1128,118 @@ class DemodCache:
                 self.q_out.put((blocknum, output))
             elif item[0] == "NEWPARAMS":
                 self.apply_newparams(item[1])
+    
+    def gpu_batch_worker(self, batch_size=10):
+        """
+        GPU-specific worker that processes blocks in batches.
+        
+        This worker accumulates blocks up to batch_size, then processes them
+        together on GPU to amortize PCIe transfer latency.
+        
+        Args:
+            batch_size: Number of blocks to accumulate before processing
+        """
+        import logging
+        from queue import Empty
+        logger = logging.getLogger(__name__)
+        
+        rf = self.rf
+        batch_items = []
+        batch_blocks = []
+        batch_params = []
+        
+        # Check if we have batch processor
+        if not hasattr(rf, 'batch_processor') or rf.batch_processor is None:
+            logger.warning("GPU batch worker called but no batch processor available, falling back to standard worker")
+            return self.worker()
+        
+        while True:
+            # Accumulate batch
+            while len(batch_items) < batch_size:
+                try:
+                    item = self.q_in.get(timeout=0.1)
+                except Empty:
+                    # Timeout - process what we have if any
+                    break
+                    
+                if item is None or (isinstance(item, tuple) and item[0] == "END"):
+                    # Process remaining batch and exit
+                    break
+                    
+                if isinstance(item, tuple) and item[0] == "DEMOD":
+                    blocknum, block, target_MTF, request = item[1:]
+                    
+                    # Prepare FFT data if needed
+                    if "fft" not in block:
+                        import numpy.fft as npfft
+                        fftdata = npfft.fft(block["rawinput"])
+                    else:
+                        fftdata = block["fft"]
+                    
+                    batch_items.append((blocknum, block, target_MTF, request))
+                    batch_blocks.append(block["rawinput"])
+                    batch_params.append((target_MTF, request))
+                elif isinstance(item, tuple) and item[0] == "NEWPARAMS":
+                    # Process batch first, then apply new params
+                    break
+            
+            if not batch_items:
+                if item is None or (isinstance(item, tuple) and item[0] == "END"):
+                    return
+                elif isinstance(item, tuple) and item[0] == "NEWPARAMS":
+                    self.apply_newparams(item[1])
+                continue
+            
+            # Process batch
+            try:
+                results = rf.batch_processor.process_batch(
+                    batch_blocks,
+                    mtf_levels=[p[0] for p in batch_params],
+                    cuts=[True] * len(batch_items)
+                )
+                
+                # Output results in order
+                for (blocknum, block, mtf, request), result in zip(batch_items, results):
+                    output = {}
+                    output["demod"] = result
+                    output["MTF"] = mtf
+                    output["request"] = request
+                    self.q_out.put((blocknum, output))
+                    
+            except Exception as e:
+                # Fallback to individual processing
+                logger.error(f"Batch processing failed: {e}, falling back to individual processing")
+                import traceback
+                traceback.print_exc()
+                
+                for blocknum, block, mtf, request in batch_items:
+                    try:
+                        # Process individually using CPU fallback
+                        if "fft" not in block:
+                            import numpy.fft as npfft
+                            fftdata = npfft.fft(block["rawinput"])
+                        else:
+                            fftdata = block["fft"]
+                            
+                        output = {}
+                        output["demod"] = rf.demodblock(
+                            data=block["rawinput"],
+                            fftdata=fftdata,
+                            mtf_level=mtf,
+                            cut=True
+                        )
+                        output["MTF"] = mtf
+                        output["request"] = request
+                        self.q_out.put((blocknum, output))
+                    except Exception as e2:
+                        logger.error(f"Individual fallback also failed for block {blocknum}: {e2}")
+                        # Put empty result to avoid blocking
+                        self.q_out.put((blocknum, {}))
+            
+            # Clear batch for next iteration
+            batch_items = []
+            batch_blocks = []
+            batch_params = []
 
     @profile
     def doread(self, blocknums, MTF, redo=False, prefetch=False):
