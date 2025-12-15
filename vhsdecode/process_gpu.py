@@ -463,19 +463,14 @@ class VHSRFDecodeGPU(VHSRFDecode):
         raw_env_gpu = cp.roll(raw_filtered_gpu, 4)
         del raw_filtered_gpu
         
-        # Envelope filtering (GPU) - Phase 2 optimization
-        try:
-            env_filter = self.Filters_gpu.get("FEnvPost", self.Filters["FEnvPost"])
-            env_gpu = envelope_filter_gpu(raw_env_gpu, env_filter)
-            env_mean = float(cp.mean(env_gpu))
-        except Exception as e:
-            logger.warning(f"GPU envelope filtering failed: {e}, using CPU fallback")
-            env = np.array(transfer_from_gpu(raw_env_gpu))
-            from vhsdecode import utils
-            env = utils.filter_simple(env, self.Filters["FEnvPost"]).astype(np.single)
-            env_mean = np.mean(env)
-            env_gpu = transfer_to_gpu(env)
-        
+        # Envelope filtering - FEnvPost is IIR (SOS format) which requires time-domain
+        # application. GPU doesn't have efficient SOS filtering yet, so use CPU.
+        # This is faster than attempting GPU and falling back every time.
+        env = np.array(transfer_from_gpu(raw_env_gpu))
+        from vhsdecode import utils
+        env = utils.filter_simple(env, self.Filters["FEnvPost"]).astype(np.single)
+        env_mean = np.mean(env)
+        env_gpu = transfer_to_gpu(env)
         del raw_env_gpu
         
         # High boost processing (GPU)
@@ -513,7 +508,8 @@ class VHSRFDecodeGPU(VHSRFDecode):
             if cp.max(demod_gpu[20:-20]) > check_value:
                 # Reconstruct hilbert for differential demod
                 hilbert_gpu = cp.fft.ifft(indata_fft_gpu * hilbert_filter_gpu)
-                hilbert_diff_gpu = cp.ediff1d(hilbert_gpu, to_begin=0)
+                # CuPy requires to_begin parameter to be a CuPy array
+                hilbert_diff_gpu = cp.ediff1d(hilbert_gpu, to_begin=cp.array([0]))
                 
                 try:
                     demod_b_gpu = unwrap_hilbert_gpu(hilbert_diff_gpu, self.freq_hz)

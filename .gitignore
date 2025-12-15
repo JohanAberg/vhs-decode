@@ -123,6 +123,12 @@ test_*.log
 test_*.tbc
 test_*.tbc.json
 test_*_chroma.tbc
+out*.log
+out*.tbc
+out*.tbc.json
+out*_chroma.tbc
+debug_*.py
+*.tmp
 
 # Sample data directory (too large for repo)
 sample_data/
@@ -139,3 +145,7 @@ Thumbs.db
 # Test data (too large for repo)
 tests/fixtures/gpu_validation/*.lds
 tests/fixtures/gpu_validation/*.ldf
+
+# Python virtual environment
+.venv/
+venv/

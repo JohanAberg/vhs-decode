@@ -8,21 +8,29 @@ import subprocess
 import time
 import json
 import os
+import sys
 from pathlib import Path
 
 # Test configurations
 SAMPLES = [
-    {"name": "sony_short_40M_8b", "file": "sample_data/sony_short_40M_8b.u8", "frames": 100},
+    {
+        "name": "out2",
+        "file": "sample_data/out2.u8",
+        "frames": 11,
+        "frequency": "20",
+        "decoder": "vhs",
+        "system": "PAL"
+    },
 ]
 
-THREAD_COUNTS = [1, 2, 4, 8]
+THREAD_COUNTS = [1, 6]
 
-def run_decode(sample_file, output, frames, threads=5, use_gpu=False):
-    """Run vhs-decode and measure time."""
+def run_decode(sample_file, output, frames, threads=5, use_gpu=False, frequency="40", decoder="vhs", system="PAL"):
+    """Run vhs-decode and measure time. Returns (elapsed_time, success, error_msg)."""
     cmd = [
-        "python", "decode.py", "vhs",
-        "--system", "PAL",
-        "-f", "40",
+        sys.executable, "decode.py", decoder,
+        "--system", system,
+        "-f", frequency,
         "--threads", str(threads),
         "--overwrite",
         "--length", str(frames),
@@ -34,10 +42,39 @@ def run_decode(sample_file, output, frames, threads=5, use_gpu=False):
         cmd.insert(7, "--gpu")
     
     start = time.time()
+    print(cmd)
     result = subprocess.run(cmd, capture_output=True, text=True)
     elapsed = time.time() - start
     
-    return elapsed, result.returncode == 0
+    # Validate output files exist and have data
+    tbc_file = Path(f"{output}.tbc")
+    json_file = Path(f"{output}.tbc.json")
+    
+    success = False
+    error_msg = ""
+    
+    if result.returncode != 0:
+        error_msg = f"Decoder exited with code {result.returncode}"
+        if result.stderr:
+            error_msg += f". Stderr: {result.stderr[:200]}"
+    elif not tbc_file.exists():
+        error_msg = f"Output file {output}.tbc not created"
+    elif tbc_file.stat().st_size == 0:
+        error_msg = f"Output file {output}.tbc is empty (0 bytes)"
+    elif not json_file.exists():
+        error_msg = f"JSON metadata file {output}.tbc.json not created"
+    elif json_file.stat().st_size == 0:
+        error_msg = f"JSON metadata file is empty"
+    else:
+        # Validate JSON is parseable
+        try:
+            with open(json_file) as f:
+                json.load(f)
+            success = True
+        except json.JSONDecodeError as e:
+            error_msg = f"Invalid JSON in metadata: {str(e)[:100]}"
+    
+    return elapsed, success, error_msg
 
 def main():
     print("\n" + "="*70)
@@ -56,16 +93,22 @@ def main():
         cpu_results = {}
         for threads in THREAD_COUNTS:
             print(f"  [CPU {threads}T] Processing...", end=" ", flush=True)
-            cpu_time, cpu_success = run_decode(
+            cpu_time, cpu_success, cpu_error = run_decode(
                 sample['file'], 
                 f"bench_cpu_t{threads}",
                 sample['frames'],
                 threads=threads,
-                use_gpu=False
+                use_gpu=False,
+                frequency=sample['frequency'],
+                decoder=sample['decoder'],
+                system=sample['system']
             )
+            if not cpu_success:
+                print(f"FAILED! {cpu_error}")
+                return 1
             cpu_results[threads] = cpu_time
             fps = sample['frames'] / cpu_time
-            print(f"Done! {cpu_time:.2f}s ({fps:.2f} FPS)")
+            print(f"✓ {cpu_time:.2f}s ({fps:.2f} FPS)")
         
         print()
         
@@ -73,16 +116,22 @@ def main():
         gpu_results = {}
         for threads in THREAD_COUNTS:
             print(f"  [GPU {threads}T] Processing...", end=" ", flush=True)
-            gpu_time, gpu_success = run_decode(
+            gpu_time, gpu_success, gpu_error = run_decode(
                 sample['file'],
                 f"bench_gpu_t{threads}", 
                 sample['frames'],
                 threads=threads,
-                use_gpu=True
+                use_gpu=True,
+                frequency=sample['frequency'],
+                decoder=sample['decoder'],
+                system=sample['system']
             )
+            if not gpu_success:
+                print(f"FAILED! {gpu_error}")
+                return 1
             gpu_results[threads] = gpu_time
             fps = sample['frames'] / gpu_time
-            print(f"Done! {gpu_time:.2f}s ({fps:.2f} FPS)")
+            print(f"✓ {gpu_time:.2f}s ({fps:.2f} FPS)")
         
         print()
         
@@ -165,6 +214,7 @@ def main():
         json.dump(results, f, indent=2)
     
     print("\nResults saved to scaling_benchmark_results.json")
+    return 0
 
 if __name__ == "__main__":
-    main()
+    exit(main())
