@@ -40,7 +40,8 @@ def unwrap_hilbert_gpu(hilbert_gpu, freq_hz):
     tangles = cp.angle(hilbert_gpu)
     
     # Calculate angle differences
-    dangles = cp.ediff1d(tangles, to_begin=0)
+    # CuPy requires to_begin to be a CuPy array
+    dangles = cp.ediff1d(tangles, to_begin=cp.array([0]))
     del tangles
     
     # Make sure unwrapping goes the right way
