@@ -29,7 +29,7 @@ class TestFullPipeline:
     )
     def test_vhs_ntsc_colorbars(self):
         """
-        Test full decode of VHS NTSC color bars.
+        Test full decode of VHS NTSC color bars with VHS tape format.
         
         This test will be implemented once the GPU decoder class is complete.
         """
@@ -39,11 +39,11 @@ class TestFullPipeline:
         # input_path = TEST_DATA_DIR / "vhs_ntsc_colorbars.lds"
         # reference_tbc = TEST_DATA_DIR / "vhs_ntsc_colorbars.tbc"
         #
-        # # Decode with CPU
-        # cpu_output = decode_file(input_path, use_gpu=False)
+        # # Decode with CPU using VHS format
+        # cpu_output = decode_file(input_path, tape_format="VHS", use_gpu=False)
         #
-        # # Decode with GPU
-        # gpu_output = decode_file(input_path, use_gpu=True)
+        # # Decode with GPU using VHS format
+        # gpu_output = decode_file(input_path, tape_format="VHS", use_gpu=True)
         #
         # # Compare outputs
         # assert_tbc_match(cpu_output, gpu_output, max_diff_percent=0.1)
@@ -54,11 +54,24 @@ class TestFullPipeline:
     )
     def test_vhs_pal_testcard(self):
         """
-        Test full decode of VHS PAL test card.
+        Test full decode of VHS PAL test card with VHS tape format.
         
         This test will be implemented once the GPU decoder class is complete.
         """
         pytest.skip("GPU decoder implementation pending")
+        
+        # TODO: Implement once VHSRFDecodeGPU is ready
+        # input_path = TEST_DATA_DIR / "vhs_pal_testcard.lds"
+        # reference_tbc = TEST_DATA_DIR / "vhs_pal_testcard.tbc"
+        #
+        # # Decode with CPU using VHS format and PAL system
+        # cpu_output = decode_file(input_path, tape_format="VHS", system="PAL", use_gpu=False)
+        #
+        # # Decode with GPU using VHS format and PAL system
+        # gpu_output = decode_file(input_path, tape_format="VHS", system="PAL", use_gpu=True)
+        #
+        # # Compare outputs
+        # assert_tbc_match(cpu_output, gpu_output, max_diff_percent=0.1)
         
     @pytest.mark.skipif(
         not (TEST_DATA_DIR / "svhs_ntsc_hifi.lds").exists(),
@@ -66,11 +79,24 @@ class TestFullPipeline:
     )
     def test_svhs_ntsc_hifi(self):
         """
-        Test full decode of SVHS NTSC hi-fi capture.
+        Test full decode of SVHS NTSC hi-fi capture with SVHS tape format.
         
         This test will be implemented once the GPU decoder class is complete.
         """
         pytest.skip("GPU decoder implementation pending")
+        
+        # TODO: Implement with SVHS tape format once VHSRFDecodeGPU is ready
+        # input_path = TEST_DATA_DIR / "svhs_ntsc_hifi.lds"
+        # reference_tbc = TEST_DATA_DIR / "svhs_ntsc_hifi.tbc"
+        #
+        # # Decode with CPU using SVHS format
+        # cpu_output = decode_file(input_path, tape_format="SVHS", use_gpu=False)
+        #
+        # # Decode with GPU using SVHS format
+        # gpu_output = decode_file(input_path, tape_format="SVHS", use_gpu=True)
+        #
+        # # Compare outputs
+        # assert_tbc_match(cpu_output, gpu_output, max_diff_percent=0.1)
 
 
 @pytest.mark.gpu

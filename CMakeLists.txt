@@ -82,10 +82,16 @@ if(QT_VERSION VERSION_LESS 5.15)
     endforeach()
 endif()
 
-find_package(PkgConfig REQUIRED)
+if(WIN32)
+    find_package(PkgConfig)
+else()
+    find_package(PkgConfig REQUIRED)
+endif()
 if(USE_QWT)
     # try pkg-config first
-    pkg_check_modules(QWT Qt${QT_VERSION_MAJOR}Qwt6)
+    if(PkgConfig_FOUND)
+        pkg_check_modules(QWT Qt${QT_VERSION_MAJOR}Qwt6)
+    endif()
     if(QWT_FOUND)
         # .....
         set(QWT_INCLUDE_DIR ${QWT_INCLUDE_DIRS})
