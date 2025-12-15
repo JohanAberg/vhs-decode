@@ -145,6 +145,32 @@ class VHSRFDecodeGPU(VHSRFDecode):
             logger.info(f"VRAM: {device.mem_info[1]/1e9:.2f} GB total, "
                        f"{device.mem_info[0]/1e9:.2f} GB free")
             
+            # Pre-allocate GPU memory pools for better performance
+            # Calculate batch size based on available memory
+            mem_total_gb = device.mem_info[1] / 1e9
+            mem_free_gb = device.mem_info[0] / 1e9
+            
+            # Use aggressive batching to maximize VRAM usage
+            # Target: Use 20-30% of available VRAM for memory pools
+            target_vram_gb = min(mem_free_gb * 0.25, 3.0)  # Cap at 3GB for safety
+            
+            # Calculate optimal batch size
+            # Estimate: ~2MB per block, so 1GB can handle ~500 blocks
+            estimated_mb_per_block = 2.0
+            optimal_batch_size = int((target_vram_gb * 1000) / estimated_mb_per_block)
+            optimal_batch_size = max(10, min(optimal_batch_size, 100))  # Clamp to 10-100
+            
+            from vhsdecode.gpu_utils import setup_gpu_memory_pools
+            setup_gpu_memory_pools(
+                blocklen=self.blocklen,
+                batch_size=optimal_batch_size,
+                target_vram_usage_gb=target_vram_gb
+            )
+            
+            # Update batch size for internal batching
+            self.batch_size = optimal_batch_size
+            logger.info(f"Configured for batch processing: {optimal_batch_size} blocks per batch")
+            
             # Lazy filter conversion: defer to first block processing
             # This avoids blocking during initialization
             self.Filters_gpu = None
