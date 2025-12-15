@@ -309,8 +309,8 @@ class GPUProfiler:
         gpu_to_cpu_mb = self.transfer_bytes['gpu_to_cpu'] / (1024**2)
         
         print(f"\nMemory Transfers:")
-        print(f"  CPU→GPU: {cpu_to_gpu_mb:.2f} MB")
-        print(f"  GPU→CPU: {gpu_to_cpu_mb:.2f} MB")
+        print(f"  CPU->GPU: {cpu_to_gpu_mb:.2f} MB")
+        print(f"  GPU->CPU: {gpu_to_cpu_mb:.2f} MB")
         print(f"  Peak GPU Memory: {self.peak_memory / (1024**2):.2f} MB")
         print("="*70 + "\n")
 
