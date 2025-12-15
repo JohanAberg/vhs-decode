@@ -1,12 +1,12 @@
 # GPU Implementation Status
 
 **Date**: December 15, 2025  
-**Phase**: Phase 1 - CuPy Integration  
-**Status**: ✅ COMPLETE - Fully Operational
+**Phase**: Phase 2 - Transfer Optimization  
+**Status**: ✅ IMPLEMENTED - Awaiting Hardware Validation
 
 ## Overview
 
-GPU acceleration infrastructure has been successfully implemented for VHS-Decode. The Phase 1 implementation focuses on using CuPy to accelerate FFT and frequency-domain filtering operations, with comprehensive testing framework and documentation.
+GPU acceleration for VHS-Decode has reached Phase 2 implementation. The initial Phase 1 CuPy integration provided correct output but was bottlenecked by 17 CPU↔GPU transfers per block. Phase 2 eliminates this bottleneck by keeping the entire pipeline on GPU, reducing transfers to 2-3 per block.
 
 ## Completed Work
 
@@ -259,10 +259,10 @@ Integration and regression tests require test captures:
 
 ### Medium Term (Next Milestone)
 
-1. **Phase 2 Planning** - Custom CUDA kernels
-2. **Optimize Phase Unwrapping** - Parallel algorithm
-3. **Batch Chroma Processing** - Fused operations
-4. **Optimize Memory Transfers** - Reduce CPU<->GPU transfers
+1. ✅ **Phase 2 Implementation** - Transfer optimization complete
+2. **Phase 2 Validation** - Hardware testing and benchmarking
+3. **Full Sub-deemphasis GPU** - Complete implementation
+4. **Chroma Demodulation GPU** - Move to GPU
 
 ### Long Term
 
@@ -273,23 +273,24 @@ Integration and regression tests require test captures:
 
 ## Performance Targets
 
-### Phase 1 (Current)
+### Phase 1 (Complete)
 
 | Metric | Target | Status |
 |--------|--------|--------|
-| Minimum Speedup | 2.0x | Ready to measure |
-| Goal Speedup | 3.0x | Ready to measure |
-| Memory Usage | <4GB VRAM | Designed for |
-| Unit Tests | 100% pass | ✅ Ready |
-| Output Match | <0.1% diff | Ready to test |
+| Minimum Speedup | 2.0x | 0.87x (bottlenecked) |
+| Goal Speedup | 3.0x | Not achieved |
+| Memory Usage | <4GB VRAM | ✅ Achieved |
+| Unit Tests | 100% pass | ✅ Passing |
+| Output Match | <0.1% diff | ✅ Exact match |
 
-### Phase 2 (Future)
+### Phase 2 (Implemented)
 
 | Metric | Target | Status |
 |--------|--------|--------|
-| Minimum Speedup | 4.0x | Planned |
-| Goal Speedup | 6.0x | Planned |
-| Custom Kernels | 3-5 kernels | Planned |
+| Transfer Reduction | 17→<5 | ✅ 17→2-3 (85-88%) |
+| Minimum Speedup | 3.0x | ⏳ Pending validation |
+| Goal Speedup | 5-7x | ⏳ Pending validation |
+| Operations on GPU | 5+ new | ✅ FM demod, envelope, spikes, NL |
 
 ## Installation & Usage
 
