@@ -476,6 +476,15 @@ def setup_gpu_memory_pools(blocklen, batch_size=10, target_vram_usage_gb=2.0):
                          f"({mem_free/1e9:.2f} GB). Adjusting to 80% of free VRAM.")
             pool_size = int(mem_free * 0.8)
         
+        # Get current pool state before allocation
+        mempool = cp.get_default_memory_pool()
+        current_limit = mempool.get_limit()
+        
+        # If current limit is too low, increase it temporarily for allocation
+        if current_limit > 0 and pool_size > current_limit:
+            logger.info(f"Current pool limit ({current_limit/1e9:.2f} GB) too low, increasing temporarily...")
+            mempool.set_limit(size=int(mem_total * 0.95))  # Allow up to 95% during allocation
+        
         # Allocate and free to setup the pool (this initializes the memory pool)
         logger.info(f"Initializing memory pool with {pool_size/1e6:.2f} MB...")
         dummy = cp.empty(pool_size, dtype=cp.uint8)
@@ -483,7 +492,6 @@ def setup_gpu_memory_pools(blocklen, batch_size=10, target_vram_usage_gb=2.0):
         
         # Set memory pool limit to prevent excessive growth
         # Allow 2x the pool size for safety margin
-        mempool = cp.get_default_memory_pool()
         pool_limit = min(pool_size * 2, int(mem_total * 0.9))  # Max 90% of total VRAM
         mempool.set_limit(size=pool_limit)
         

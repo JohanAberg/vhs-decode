@@ -79,8 +79,11 @@ def test_memory_pool_setup():
         else:
             logger.info("  Note: Memory pool limit not set (unlimited)")
         
-        # Cleanup
+        # Cleanup - free memory and reset limit for subsequent tests
         cp.get_default_memory_pool().free_all_blocks()
+        # Reset limit to allow subsequent tests to use more memory
+        info = get_gpu_info()
+        mempool.set_limit(size=int(info['memory_total'] * 0.95))
         
         return mem_used > 0
         
@@ -199,9 +202,13 @@ def test_vram_utilization_increase():
         
         logger.info(f"Testing aggressive VRAM usage: {target_vram_gb:.2f} GB target")
         
-        # Get initial usage
+        # Get initial usage and reset any previous pool limits
         mempool = cp.get_default_memory_pool()
         initial_used = mempool.used_bytes()
+        
+        # Reset memory pool limit to allow larger allocations
+        # (previous tests may have set a lower limit)
+        mempool.set_limit(size=int(mem_total * 0.95))  # Allow up to 95% of VRAM
         
         # Setup pool
         setup_gpu_memory_pools(blocklen, batch_size, target_vram_gb)
