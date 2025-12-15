@@ -25,7 +25,8 @@ from vhsdecode.gpu_utils import (
     get_profiler
 )
 
-logger = logging.getLogger(__name__)
+# Use lddecode logger to ensure output is captured by the main logging setup
+logger = logging.getLogger("lddecode")
 
 # Import CuPy if available
 if GPU_AVAILABLE:
@@ -99,9 +100,29 @@ class VHSRFDecodeGPU(VHSRFDecode):
             logger.info(f"GPU acceleration enabled on device {self.gpu_id} ({mode} mode)")
         else:
             logger.info("GPU acceleration disabled, using CPU")
+        # Internal batching support
+        self.cache = None
+        self.batch_cache = {}
+        self.batch_size = 8  # Configurable batch size
+    
+    def set_cache(self, cache):
+        """Set the DemodCache instance for internal batching."""
+        self.cache = cache
+        self.batch_cache = {}
+        logger.info(f"Internal batching enabled (batch_size={self.batch_size})")
+
+    def demodblock(
+        self, data=None, mtf_level=0, fftdata=None, cut=False, thread_benchmark=False
+    ):
+        """Override parent demodblock to route through GPU acceleration if enabled.
+        
+        This is the main entry point for block demodulation.
+        """
+        # logger.info(f"demodblock called: use_gpu={self.use_gpu}, optimize_transfers={self.optimize_transfers}")
+        return self._demodblock_single(data, mtf_level, fftdata, cut, thread_benchmark)
     
     def _setup_gpu(self):
-        """Setup GPU device and transfer filters to GPU memory."""
+        """Setup GPU device and defer filter conversion to first use."""
         if not self.use_gpu:
             return
         
@@ -124,13 +145,28 @@ class VHSRFDecodeGPU(VHSRFDecode):
             logger.info(f"VRAM: {device.mem_info[1]/1e9:.2f} GB total, "
                        f"{device.mem_info[0]/1e9:.2f} GB free")
             
-            # Transfer filters to GPU
-            self._move_filters_to_gpu()
+            # Lazy filter conversion: defer to first block processing
+            # This avoids blocking during initialization
+            self.Filters_gpu = None
+            self._filters_converted = False
             
         except Exception as e:
             logger.error(f"Failed to setup GPU: {e}")
             logger.warning("Falling back to CPU")
             self.use_gpu = False
+    
+    def _lazy_init_filters(self):
+        """Lazy initialization of GPU filters on first block processing.
+        
+        This defers CPU-heavy filter conversion from __init__ to first use,
+        allowing GPU to be ready immediately and main thread to start processing.
+        """
+        if self._filters_converted or not self.use_gpu:
+            return
+        
+        logger.debug("Converting filters to GPU format (lazy init)...")
+        self._move_filters_to_gpu()
+        self._filters_converted = True
     
     def _move_filters_to_gpu(self):
         """Transfer precomputed filters to GPU memory."""
@@ -143,7 +179,7 @@ class VHSRFDecodeGPU(VHSRFDecode):
             # Convert IIR filters to FIR for GPU processing
             from vhsdecode.filter_conversion import design_fir_envelope_filter
             
-            logger.info("Converting envelope filter from IIR to FIR for GPU...")
+            logger.debug("Converting envelope filter from IIR to FIR for GPU...")
             fir_coeffs, fir_freq = design_fir_envelope_filter(
                 self.Filters["FEnvPost"],  # Original IIR in SOS format
                 self.freq_hz,              # Sample rate
@@ -156,7 +192,7 @@ class VHSRFDecodeGPU(VHSRFDecode):
             self.Filters_gpu["FEnvPost_FIR_freq"] = cp.asarray(fir_freq)  # GPU frequency-domain
             
             # Convert FVideoBurst from IIR to FIR for GPU chroma processing
-            logger.info("Converting FVideoBurst filter from IIR to FIR for GPU...")
+            logger.debug("Converting FVideoBurst filter from IIR to FIR for GPU...")
             burst_fir_coeffs, burst_fir_freq = design_fir_envelope_filter(
                 self.Filters["FVideoBurst"],  # Original IIR in SOS format
                 self.freq_hz,                 # Sample rate
@@ -183,50 +219,159 @@ class VHSRFDecodeGPU(VHSRFDecode):
             logger.error(f"Failed to transfer filters to GPU: {e}")
             raise GPUError(f"Filter transfer failed: {e}")
     
-    def demodblock(
+    def _demodblock_single(
         self, data=None, mtf_level=0, fftdata=None, cut=False, thread_benchmark=False
     ):
-        """
-        GPU-accelerated demodulation block.
+        """GPU-accelerated demodulation block - routes to GPU or CPU.
         
-        Routes to optimized or standard GPU implementation based on configuration.
-        Automatically falls back to CPU on GPU errors.
-        
-        Args:
-            data: Input RF data block
-            mtf_level: MTF compensation level
-            fftdata: Pre-computed FFT data (optional)
-            cut: Whether to cut block edges
-            thread_benchmark: Enable benchmarking
-            
-        Returns:
-            dict: Demodulated video data
-            
-        Raises:
-            GPUError: If GPU processing fails (with CPU fallback)
+        Internal batching is disabled for now - using single-block GPU processing.
         """
         if not self.use_gpu:
-            # Use CPU version
+            logger.debug("GPU disabled, using CPU demodblock")
             return super().demodblock(data, mtf_level, fftdata, cut, thread_benchmark)
-        
+
+        # Lazy initialize filters on first block
+        self._lazy_init_filters()
+
+        # For now, skip batching and go directly to GPU processing
+        # TODO: Fix batching logic to properly extract block data from queue items
         try:
             if self.optimize_transfers:
+                # logger.info("GPU single block: using Phase 2 optimized path")
                 return self._demodblock_gpu_optimized(data, mtf_level, fftdata, cut, thread_benchmark)
             else:
+                logger.info("GPU single block: using Phase 1 standard path")
                 return self._demodblock_gpu(data, mtf_level, fftdata, cut, thread_benchmark)
-        except (cp.cuda.memory.OutOfMemoryError, GPUError) as e:
-            logger.warning(f"GPU demodblock failed: {e}, falling back to CPU")
-            # Fallback to CPU
-            free_gpu_memory()  # Clean up GPU memory
-            return super().demodblock(data, mtf_level, fftdata, cut, thread_benchmark)
         except Exception as e:
-            import traceback
-            logger.error(f"Unexpected error in GPU demodblock: {e}")
-            logger.error(f"Traceback: {traceback.format_exc()}")
-            # Fallback to CPU
+            logger.error(f"GPU demodblock failed: {e}, falling back to CPU")
             free_gpu_memory()
             return super().demodblock(data, mtf_level, fftdata, cut, thread_benchmark)
-    
+
+    def _demodblock_gpu_batch(self, current_data, stolen_items, mtf_level, cut):
+        """Batched GPU processing."""
+        # Lazy initialize filters on first batch processing
+        self._lazy_init_filters()
+        
+        import time
+        from vhsdecode.gpu_utils import demod_chroma_filt_gpu
+        
+        # 1. Prepare Batch
+        batch_size = 1 + len(stolen_items)
+        data_list = [current_data[:self.blocklen]]
+        for item in stolen_items:
+            data_list.append(item[1]["rawinput"][:self.blocklen])
+            
+        # Stack and transfer
+        data_stacked = np.stack(data_list)
+        data_gpu = transfer_to_gpu(data_stacked)
+        
+        # 2. Process Batch
+        # FFT
+        indata_fft_gpu = cp.fft.fft(data_gpu)
+        
+        # Filters
+        if self._notch is not None:
+            indata_fft_gpu *= self.Filters_gpu["FVideoNotchF"]
+        indata_fft_gpu *= self.Filters_gpu["RFVideo"]
+        
+        # Hilbert Envelope
+        hilbert_filter_gpu = self.Filters_gpu["hilbert"]
+        raw_filtered_gpu = cp.fft.ifft(indata_fft_gpu * hilbert_filter_gpu).real
+        cp.abs(raw_filtered_gpu, out=raw_filtered_gpu)
+        raw_env_gpu = cp.roll(raw_filtered_gpu, 4, axis=-1)
+        
+        # Envelope Filter
+        env_fft_gpu = cp.fft.rfft(raw_env_gpu)
+        env_filtered_fft_gpu = env_fft_gpu * self.Filters_gpu["FEnvPost_FIR_freq"]
+        env_gpu = cp.fft.irfft(env_filtered_fft_gpu, n=raw_env_gpu.shape[-1]).real
+        
+        # FM Demod
+        hilbert_gpu = cp.fft.ifft(indata_fft_gpu * hilbert_filter_gpu)
+        demod_gpu = unwrap_hilbert_gpu(hilbert_gpu, self.freq_hz)
+        
+        # Spikes
+        if not self._disable_diff_demod:
+            check_value = self.options.diff_demod_check_value
+            max_vals = cp.max(demod_gpu[..., 20:-20], axis=-1)
+            if cp.any(max_vals > check_value):
+                hilbert_diff_gpu = cp.diff(hilbert_gpu, axis=-1)
+                zeros = cp.zeros((batch_size, 1), dtype=hilbert_gpu.dtype)
+                hilbert_diff_gpu = cp.concatenate([zeros, hilbert_diff_gpu], axis=-1)
+                
+                demod_b_gpu = unwrap_hilbert_gpu(hilbert_diff_gpu, self.freq_hz)
+                demod_gpu = replace_spikes_gpu(demod_gpu, demod_b_gpu, check_value)
+        
+        # CPU Fallbacks (Video EQ, Chroma Trap)
+        if self._video_eq or self._chroma_trap:
+            demod_cpu = transfer_from_gpu(demod_gpu)
+            for i in range(batch_size):
+                if self._video_eq:
+                    demod_cpu[i] = self._video_eq.filter_video(demod_cpu[i])
+                if self._chroma_trap:
+                    demod_cpu[i] = self.chromaTrap.work(demod_cpu[i])
+            demod_gpu = transfer_to_gpu(demod_cpu)
+            
+        # Deemphasis
+        demod_fft_gpu = cp.fft.rfft(demod_gpu)
+        out_video_fft_gpu = demod_fft_gpu * self.Filters_gpu["FVideo"]
+        out_video_gpu = cp.fft.irfft(out_video_fft_gpu).real
+        
+        # Nonlinear Deemphasis
+        if self.options.nldeemp:
+            limit_low = -10 * (self._sysparams_const.hz_ire / 1000000.0)
+            limit_high = 10 * (self._sysparams_const.hz_ire / 1000000.0)
+            out_video_gpu = nonlinear_deemphasis_gpu(
+                out_video_gpu, out_video_fft_gpu, 
+                self.Filters_gpu["NLHighPassF"],
+                limit_low, limit_high
+            )
+            
+        # Video 0.5 filter
+        video05_filter_gpu = self.Filters_gpu["FVideo05"]
+        out_video05_gpu = cp.fft.irfft(demod_fft_gpu * video05_filter_gpu).real
+        
+        # Chroma
+        chroma_gpu = demod_chroma_filt_gpu(demod_gpu, self.Filters_gpu["FChromaBurst"], self.blocklen)
+        
+        # Transfer results to CPU
+        out_video_cpu = transfer_from_gpu(out_video_gpu)
+        out_video05_cpu = transfer_from_gpu(out_video05_gpu)
+        chroma_cpu = transfer_from_gpu(chroma_gpu)
+        env_cpu = transfer_from_gpu(env_gpu)
+        
+        # Roll video05
+        out_video05_cpu = np.roll(out_video05_cpu, -self.Filters["F05_offset"], axis=-1)
+        
+        # 3. Distribute Results
+        current_result = None
+        
+        for i in range(batch_size):
+            # Construct video_out
+            video_out = np.rec.array(
+                [out_video_cpu[i], out_video05_cpu[i], chroma_cpu[i], env_cpu[i]],
+                names=["demod", "demod_05", "demod_burst", "envelope"],
+            )
+            
+            rv = {}
+            rv["video"] = (
+                video_out[self.blockcut : -self.blockcut_end] if cut else video_out
+            )
+            
+            if i == 0:
+                current_result = rv
+            else:
+                # Stolen item
+                item = stolen_items[i-1]
+                blocknum, block, target_mtf, request = item[1:]
+                output = {
+                    "demod": rv,
+                    "MTF": target_mtf,
+                    "request": request
+                }
+                self.cache.q_out.put((blocknum, output))
+                
+        return current_result
+
     def _demodblock_gpu(
         self, data=None, mtf_level=0, fftdata=None, cut=False, thread_benchmark=False
     ):
@@ -236,6 +381,9 @@ class VHSRFDecodeGPU(VHSRFDecode):
         This is Phase 1 implementation focusing on FFT and filtering operations.
         Some operations still run on CPU and will be moved to GPU in Phase 2.
         """
+        # Lazy initialize filters
+        self._lazy_init_filters()
+        
         import time
         from vhsdecode import utils
         from vhsdecode.chroma import demod_chroma_filt
@@ -245,6 +393,13 @@ class VHSRFDecodeGPU(VHSRFDecode):
         
         rv = {}
         demod_start_time = time.time()
+        
+        # Verify GPU is available and filters are ready
+        if not self.use_gpu or self.Filters_gpu is None:
+            logger.error("GPU Phase 1 path called but GPU not ready, falling back to CPU")
+            return super().demodblock(data, mtf_level, fftdata, cut, thread_benchmark)
+        
+        logger.info(f"GPU Phase 1 demodblock started")
         
         # Phase 1: FFT operations on GPU
         if fftdata is not None:
@@ -479,6 +634,9 @@ class VHSRFDecodeGPU(VHSRFDecode):
         
         Expected speedup: 3-6x over CPU, 3-4x over Phase 1 GPU
         """
+        # Lazy initialize filters
+        self._lazy_init_filters()
+        
         import time
         from vhsdecode.chroma import demod_chroma_filt
         import scipy.signal as sps
@@ -486,7 +644,17 @@ class VHSRFDecodeGPU(VHSRFDecode):
         rv = {}
         demod_start_time = time.time()
         
-        # Get profiler if profiling enabled
+        # Verify GPU is available and filters are ready
+        if not self.use_gpu or self.Filters_gpu is None:
+            logger.error("GPU path called but GPU not ready, falling back to CPU")
+            return super().demodblock(data, mtf_level, fftdata, cut, thread_benchmark)
+        
+        # GPU synchronize at start to measure pure GPU time
+        cp.cuda.Stream.null.synchronize()
+        gpu_start_time = time.time()
+        
+        # logger.info(f"GPU demodblock Phase 2 started - device: {cp.cuda.Device()}")
+        
         profiler = get_profiler() if hasattr(self, 'enable_profiling') and self.enable_profiling else None
         
         # === TRANSFER 1: Input data to GPU ===
@@ -813,9 +981,16 @@ class VHSRFDecodeGPU(VHSRFDecode):
             video_out[self.blockcut : -self.blockcut_end] if cut else video_out
         )
         
+        # Synchronize GPU to measure actual time
+        cp.cuda.Stream.null.synchronize()
         demod_end_time = time.time()
+        gpu_time = demod_end_time - gpu_start_time
+        
+        # logger.info(f"GPU demodblock Phase 2 completed - GPU time: {gpu_time*1000:.2f}ms")
+        
         if thread_benchmark:
             rv["demod_time"] = demod_end_time - demod_start_time
+            rv["gpu_time"] = gpu_time
         
         return rv
     

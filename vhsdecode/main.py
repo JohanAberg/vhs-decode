@@ -554,7 +554,6 @@ def main(args=None, use_gui=False):
         try:
             vhsd.rf.print_profiling_summary()
         except (AttributeError, Exception) as e:
-            import traceback
             logger.warning(f"Could not print GPU profiling summary: {e}")
             traceback.print_exc()
 

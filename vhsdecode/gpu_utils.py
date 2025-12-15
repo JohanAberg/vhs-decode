@@ -220,30 +220,44 @@ def demod_chroma_filt_gpu(data_gpu, filter_gpu, blocklen, notch_gpu=None, do_not
     Returns:
         CuPy array: Filtered chroma data on GPU
     
-    Performance: ~8-10x faster than CPU version (1.3ms → 0.15ms per block)
+    Performance: Optimized to combine filters and operations in frequency domain.
     """
     if not GPU_AVAILABLE:
         raise RuntimeError("GPU not available for demod_chroma_filt_gpu")
     
     # Take only blocklen samples
-    data_block = data_gpu[:blocklen]
+    if data_gpu.ndim == 1:
+        data_block = data_gpu[:blocklen]
+    else:
+        data_block = data_gpu[..., :blocklen]
     
-    # Apply burst filter using FFT convolution (frequency-domain multiplication)
+    # FFT
     data_fft = cp.fft.rfft(data_block)
-    out_chroma_fft = data_fft * filter_gpu
-    out_chroma = cp.fft.irfft(out_chroma_fft).real
     
-    # Apply notch filter if requested (also using FFT convolution)
+    # Apply burst filter
+    # If notch is enabled, we can combine it in frequency domain to save an IFFT/FFT pair
     if do_notch and notch_gpu is not None:
-        out_chroma_fft = cp.fft.rfft(out_chroma)
-        out_chroma_fft *= notch_gpu
-        out_chroma = cp.fft.irfft(out_chroma_fft).real
+        # Combine filters (element-wise multiplication)
+        # Note: We modify data_fft in place to save memory
+        data_fft *= filter_gpu
+        data_fft *= notch_gpu
+    else:
+        data_fft *= filter_gpu
+        
+    # Remove DC offset in frequency domain (much faster than mean() reduction)
+    # DC component is at index 0
+    if data_fft.ndim == 1:
+        data_fft[0] = 0.0
+    else:
+        data_fft[..., 0] = 0.0
+    
+    # IFFT
+    out_chroma = cp.fft.irfft(data_fft).real
     
     # Roll to compensate for Y filter delay
-    out_chroma = cp.roll(out_chroma, move)
-    
-    # Remove DC offset
-    out_chroma -= cp.mean(out_chroma)
+    # We could do this in freq domain with phase shift, but cp.roll is fast enough
+    if move != 0:
+        out_chroma = cp.roll(out_chroma, move)
     
     # Convert to float32 to match CPU version output type
     out_chroma = out_chroma.astype(cp.float32)
@@ -372,6 +386,11 @@ def get_profiler():
     global _gpu_profiler
     if _gpu_profiler is None:
         _gpu_profiler = GPUProfiler()
+    return _gpu_profiler
+
+def get_active_profiler():
+    """Get the global GPU profiler if it exists, else None."""
+    global _gpu_profiler
     return _gpu_profiler
 
 def enable_profiling():

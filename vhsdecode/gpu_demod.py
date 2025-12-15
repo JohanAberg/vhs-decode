@@ -17,6 +17,7 @@ except ImportError:
     cp = None
     GPU_AVAILABLE = False
 
+from vhsdecode.gpu_utils import get_active_profiler
 
 def unwrap_hilbert_gpu(hilbert_gpu, freq_hz):
     """
@@ -35,37 +36,51 @@ def unwrap_hilbert_gpu(hilbert_gpu, freq_hz):
     if not GPU_AVAILABLE:
         raise RuntimeError("GPU not available for unwrap_hilbert_gpu")
     
+    profiler = get_active_profiler()
+    
     tau = 2.0 * cp.pi
     freq_scale = freq_hz / tau
     
-    # Calculate angles on GPU (keep float64 for precision)
-    tangles = cp.angle(hilbert_gpu)
+    # Method 3: Phase difference via complex conjugate product
+    # dphi = angle( z[t] * conj(z[t-1]) )
+    # This gives the phase change in [-pi, pi] directly, avoiding unwrap
     
-    # Calculate angle differences - optimized to avoid ediff1d overhead
-    dangles = cp.empty_like(tangles)
-    dangles[0] = 0.0
-    dangles[1:] = cp.diff(tangles)
-    del tangles
+    if profiler: profiler.start("6a_fm_complex_mult")
+    # Calculate z[t] * conj(z[t-1])
+    # This vector represents the phase rotation between samples
+    if hilbert_gpu.ndim == 1:
+        term = hilbert_gpu[1:] * cp.conj(hilbert_gpu[:-1])
+    else:
+        term = hilbert_gpu[..., 1:] * cp.conj(hilbert_gpu[..., :-1])
+    if profiler: profiler.stop()
     
-    # Fix first element wrapping in-place (avoid conditional sync)
-    if dangles[0] < -cp.pi:
-        dangles[0] += tau
+    if profiler: profiler.start("6b_fm_angle")
+    # Extract phase angle (dphi)
+    dphi = cp.angle(term)
+    del term
+    if profiler: profiler.stop()
     
-    # Unwrap on GPU
-    tdangles2 = cp.unwrap(dangles)
-    del dangles
+    if profiler: profiler.start("6c_fm_pad_scale")
+    # Pad to match original length (first sample has no diff)
+    freq = cp.empty_like(hilbert_gpu, dtype=cp.float64)
+    if hilbert_gpu.ndim == 1:
+        freq[0] = 0.0
+        freq[1:] = dphi
+    else:
+        freq[..., 0] = 0.0
+        freq[..., 1:] = dphi
+    del dphi
     
-    # Fix any jumps in unwrapped angles using vectorized operations
-    # instead of while loops - avoids GPU↔CPU synchronization
-    # Apply modulo operation to bring values into [0, tau] range
-    tdangles2 = cp.fmod(tdangles2, tau)
-    # Handle negative values
-    tdangles2 = cp.where(tdangles2 < 0, tdangles2 + tau, tdangles2)
+    # Fixups to map [-pi, pi] to [0, 2pi]
+    # cp.mod (Python %) operator handles negative values correctly by wrapping to [0, tau)
+    # This replaces the slower fmod + where combination
+    freq = cp.mod(freq, tau)
     
-    # Convert to frequency
-    tdangles2 *= freq_scale
+    # Scale to Hz
+    freq *= freq_scale
+    if profiler: profiler.stop()
     
-    return tdangles2
+    return freq
 
 
 def replace_spikes_gpu(demod_gpu, demod_diffed_gpu, max_value, replace_start=8, replace_end=30):
@@ -85,6 +100,13 @@ def replace_spikes_gpu(demod_gpu, demod_diffed_gpu, max_value, replace_start=8, 
     if not GPU_AVAILABLE:
         raise RuntimeError("GPU not available for replace_spikes_gpu")
     
+    # Handle batching
+    if demod_gpu.ndim == 2:
+        result = cp.empty_like(demod_gpu)
+        for i in range(demod_gpu.shape[0]):
+            result[i] = replace_spikes_gpu(demod_gpu[i], demod_diffed_gpu[i], max_value, replace_start, replace_end)
+        return result
+
     # Find spikes
     too_high = demod_gpu > max_value
     spike_indices = cp.where(too_high)[0]
@@ -141,9 +163,9 @@ def envelope_filter_gpu(raw_env_gpu, filter_coeffs):
     env_fft = cp.fft.rfft(raw_env_gpu)
     
     # Ensure filter length matches
-    if len(filter_coeffs) != len(env_fft):
+    n_fft = env_fft.shape[-1]
+    if len(filter_coeffs) != n_fft:
         # Resize filter to match FFT length
-        n_fft = len(env_fft)
         if len(filter_coeffs) < n_fft:
             # Pad filter
             filter_resized = cp.zeros(n_fft, dtype=filter_coeffs.dtype)
@@ -154,7 +176,7 @@ def envelope_filter_gpu(raw_env_gpu, filter_coeffs):
             filter_coeffs = filter_coeffs[:n_fft]
     
     filtered_fft = env_fft * filter_coeffs
-    return cp.fft.irfft(filtered_fft, n=len(raw_env_gpu))
+    return cp.fft.irfft(filtered_fft, n=raw_env_gpu.shape[-1])
 
 
 def sub_deemphasis_gpu(out_video_gpu, out_video_fft_gpu, filters_gpu, 
@@ -185,7 +207,7 @@ def sub_deemphasis_gpu(out_video_gpu, out_video_fft_gpu, filters_gpu,
     # Apply sub-deemphasis filter
     if "SubDeemp" in filters_gpu:
         sub_fft = out_video_fft_gpu * filters_gpu["SubDeemp"]
-        sub_filtered = cp.fft.irfft(sub_fft, n=len(out_video_gpu))
+        sub_filtered = cp.fft.irfft(sub_fft, n=out_video_gpu.shape[-1])
         
         # Simple mixing (actual implementation is more complex)
         result = out_video_gpu + sub_filtered * static_factor
@@ -215,7 +237,7 @@ def nonlinear_deemphasis_gpu(out_video_gpu, out_video_fft_gpu, nl_highpass_filte
     
     # Apply highpass filter
     hf_fft = out_video_fft_gpu * nl_highpass_filter_gpu
-    hf_part = cp.fft.irfft(hf_fft, n=len(out_video_gpu))
+    hf_part = cp.fft.irfft(hf_fft, n=out_video_gpu.shape[-1])
     
     # Clip high frequency part
     cp.clip(hf_part, limit_low, limit_high, out=hf_part)

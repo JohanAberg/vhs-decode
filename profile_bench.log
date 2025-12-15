@@ -1,0 +1,180 @@
+2025-12-15 19:32:10,931 - lddecode - INFO - GPU profiling enabled
+2025-12-15 19:32:11,057 - lddecode - INFO - Using GPU: NVIDIA GeForce RTX 4070 Ti
+2025-12-15 19:32:11,057 - lddecode - INFO - VRAM: 12.88 GB total, 11.57 GB free
+2025-12-15 19:32:11,057 - lddecode - INFO - GPU acceleration enabled on device 0 (optimized mode)
+2025-12-15 19:32:11,060 - lddecode - INFO - AsyncLoader initialized (queue_size=128)
+2025-12-15 19:32:11,062 - lddecode - INFO - Internal batching enabled (batch_size=8)
+2025-12-15 19:32:11,114 - lddecode - DEBUG - Converting filters to GPU format (lazy init)...
+2025-12-15 19:32:11,114 - lddecode - DEBUG - Converting filters to GPU format (lazy init)...
+2025-12-15 19:32:11,114 - lddecode - DEBUG - Converting filters to GPU format (lazy init)...
+2025-12-15 19:32:11,116 - lddecode - DEBUG - Converting filters to GPU format (lazy init)...
+2025-12-15 19:32:11,118 - lddecode - DEBUG - Converting envelope filter from IIR to FIR for GPU...
+2025-12-15 19:32:11,118 - lddecode - DEBUG - Converting envelope filter from IIR to FIR for GPU...
+2025-12-15 19:32:11,120 - lddecode - DEBUG - Converting envelope filter from IIR to FIR for GPU...
+2025-12-15 19:32:11,120 - lddecode - DEBUG - Converting envelope filter from IIR to FIR for GPU...
+2025-12-15 19:32:11,128 - lddecode - DEBUG - Converting FVideoBurst filter from IIR to FIR for GPU...
+2025-12-15 19:32:11,130 - lddecode - DEBUG - Converting FVideoBurst filter from IIR to FIR for GPU...
+2025-12-15 19:32:11,131 - lddecode - DEBUG - Converting FVideoBurst filter from IIR to FIR for GPU...
+2025-12-15 19:32:11,132 - lddecode - DEBUG - Converting FVideoBurst filter from IIR to FIR for GPU...
+2025-12-15 19:32:11,152 - lddecode - DEBUG - Transferred 18 filters to GPU
+2025-12-15 19:32:11,158 - lddecode - DEBUG - Transferred 18 filters to GPU
+2025-12-15 19:32:11,158 - lddecode - DEBUG - Transferred 18 filters to GPU
+2025-12-15 19:32:11,160 - lddecode - DEBUG - Transferred 18 filters to GPU
+2025-12-15 19:32:12,143 - lddecode - DEBUG - VBI EQ serration pulses search failed (using fallback logic)
+2025-12-15 19:32:12,814 - lddecode - DEBUG - VBI serration levels 3 - Sync tip: 3819.05 kHz, Blanking (ire0): 4123.07 kHz
+2025-12-15 19:32:12,959 - lddecode - DEBUG - VBI serration levels 3 - Sync tip: 3817.65 kHz, Blanking (ire0): 4123.01 kHz
+2025-12-15 19:32:13,142 - lddecode - DEBUG - Trying to detect PAL track phase...
+2025-12-15 19:32:13,485 - lddecode - DEBUG - Phase previously set: 0
+2025-12-15 19:32:13,486 - lddecode - DEBUG - phase0 mean: 2171.23
+2025-12-15 19:32:13,486 - lddecode - DEBUG - phase1 mean: 131.91
+2025-12-15 19:32:13,487 - lddecode - DEBUG - assumed_phase: 0
+2025-12-15 19:32:13,740 - lddecode - DEBUG - VBI serration levels 4 - Sync tip: 3819.43 kHz, Blanking (ire0): 4123.48 kHz
+2025-12-15 19:32:14,118 - lddecode - DEBUG - VBI serration levels 4 - Sync tip: 3819.29 kHz, Blanking (ire0): 4123.34 kHz
+2025-12-15 19:32:14,350 - lddecode - DEBUG - File Frame 1: VHS 
+2025-12-15 19:32:14,448 - lddecode - DEBUG - VBI serration levels 3 - Sync tip: 3821.10 kHz, Blanking (ire0): 4129.58 kHz
+2025-12-15 19:32:14,817 - lddecode - DEBUG - VBI serration levels 4 - Sync tip: 3818.94 kHz, Blanking (ire0): 4123.08 kHz
+2025-12-15 19:32:15,015 - lddecode - DEBUG - File Frame 2: VHS 
+2025-12-15 19:32:15,111 - lddecode - DEBUG - VBI serration levels 4 - Sync tip: 3818.82 kHz, Blanking (ire0): 4123.05 kHz
+2025-12-15 19:32:15,460 - lddecode - DEBUG - VBI serration levels 4 - Sync tip: 3818.57 kHz, Blanking (ire0): 4122.80 kHz
+2025-12-15 19:32:15,708 - lddecode - DEBUG - File Frame 3: VHS 
+2025-12-15 19:32:15,809 - lddecode - DEBUG - VBI serration levels 4 - Sync tip: 3818.49 kHz, Blanking (ire0): 4123.01 kHz
+2025-12-15 19:32:16,182 - lddecode - DEBUG - VBI serration levels 4 - Sync tip: 3818.62 kHz, Blanking (ire0): 4123.13 kHz
+2025-12-15 19:32:16,428 - lddecode - DEBUG - File Frame 4: VHS 
+2025-12-15 19:32:16,521 - lddecode - DEBUG - VBI serration levels 4 - Sync tip: 3818.76 kHz, Blanking (ire0): 4123.25 kHz
+2025-12-15 19:32:16,860 - lddecode - DEBUG - VBI serration levels 4 - Sync tip: 3818.75 kHz, Blanking (ire0): 4123.52 kHz
+2025-12-15 19:32:17,124 - lddecode - DEBUG - File Frame 5: VHS 
+2025-12-15 19:32:17,222 - lddecode - DEBUG - VBI serration levels 4 - Sync tip: 3818.70 kHz, Blanking (ire0): 4123.71 kHz
+2025-12-15 19:32:17,541 - lddecode - DEBUG - VBI serration levels 4 - Sync tip: 3818.52 kHz, Blanking (ire0): 4123.58 kHz
+2025-12-15 19:32:17,720 - lddecode - DEBUG - File Frame 6: VHS 
+2025-12-15 19:32:17,812 - lddecode - DEBUG - VBI serration levels 4 - Sync tip: 3818.41 kHz, Blanking (ire0): 4123.65 kHz
+2025-12-15 19:32:18,038 - lddecode - DEBUG - VBI serration levels 4 - Sync tip: 3818.69 kHz, Blanking (ire0): 4123.98 kHz
+2025-12-15 19:32:18,141 - lddecode - DEBUG - File Frame 7: VHS 
+2025-12-15 19:32:18,235 - lddecode - DEBUG - VBI serration levels 4 - Sync tip: 3818.67 kHz, Blanking (ire0): 4123.84 kHz
+2025-12-15 19:32:18,467 - lddecode - DEBUG - VBI serration levels 4 - Sync tip: 3818.70 kHz, Blanking (ire0): 4123.04 kHz
+2025-12-15 19:32:18,596 - lddecode - DEBUG - File Frame 8: VHS 
+2025-12-15 19:32:18,702 - lddecode - DEBUG - VBI serration levels 3 - Sync tip: 3820.57 kHz, Blanking (ire0): 4129.44 kHz
+2025-12-15 19:32:18,976 - lddecode - DEBUG - VBI serration levels 4 - Sync tip: 3818.27 kHz, Blanking (ire0): 4122.46 kHz
+2025-12-15 19:32:19,106 - lddecode - DEBUG - File Frame 9: VHS 
+2025-12-15 19:32:19,220 - lddecode - DEBUG - VBI serration levels 4 - Sync tip: 3818.35 kHz, Blanking (ire0): 4121.93 kHz
+2025-12-15 19:32:19,469 - lddecode - DEBUG - VBI serration levels 4 - Sync tip: 3818.46 kHz, Blanking (ire0): 4122.16 kHz
+2025-12-15 19:32:19,610 - lddecode - DEBUG - File Frame 10: VHS 
+2025-12-15 19:32:19,724 - lddecode - DEBUG - VBI serration levels 4 - Sync tip: 3818.79 kHz, Blanking (ire0): 4122.53 kHz
+2025-12-15 19:32:19,977 - lddecode - DEBUG - VBI serration levels 3 - Sync tip: 3817.40 kHz, Blanking (ire0): 4122.91 kHz
+2025-12-15 19:32:20,176 - lddecode - DEBUG - File Frame 11: VHS 
+2025-12-15 19:32:20,333 - lddecode - DEBUG - VBI serration levels 4 - Sync tip: 3818.89 kHz, Blanking (ire0): 4123.29 kHz
+2025-12-15 19:32:20,596 - lddecode - DEBUG - VBI serration levels 4 - Sync tip: 3818.72 kHz, Blanking (ire0): 4122.94 kHz
+2025-12-15 19:32:20,720 - lddecode - DEBUG - File Frame 12: VHS 
+2025-12-15 19:32:20,816 - lddecode - DEBUG - VBI serration levels 3 - Sync tip: 3820.82 kHz, Blanking (ire0): 4129.15 kHz
+2025-12-15 19:32:21,059 - lddecode - DEBUG - VBI serration levels 4 - Sync tip: 3818.61 kHz, Blanking (ire0): 4122.95 kHz
+2025-12-15 19:32:21,160 - lddecode - DEBUG - File Frame 13: VHS 
+2025-12-15 19:32:21,252 - lddecode - DEBUG - VBI serration levels 3 - Sync tip: 3820.71 kHz, Blanking (ire0): 4129.66 kHz
+2025-12-15 19:32:21,493 - lddecode - DEBUG - VBI serration levels 4 - Sync tip: 3818.95 kHz, Blanking (ire0): 4123.55 kHz
+2025-12-15 19:32:21,607 - lddecode - DEBUG - File Frame 14: VHS 
+2025-12-15 19:32:21,709 - lddecode - DEBUG - VBI serration levels 4 - Sync tip: 3819.03 kHz, Blanking (ire0): 4123.41 kHz
+2025-12-15 19:32:21,919 - lddecode - DEBUG - VBI serration levels 4 - Sync tip: 3819.01 kHz, Blanking (ire0): 4123.50 kHz
+2025-12-15 19:32:22,050 - lddecode - DEBUG - File Frame 15: VHS 
+2025-12-15 19:32:22,145 - lddecode - DEBUG - VBI serration levels 4 - Sync tip: 3818.65 kHz, Blanking (ire0): 4123.20 kHz
+2025-12-15 19:32:22,349 - lddecode - DEBUG - VBI serration levels 4 - Sync tip: 3818.46 kHz, Blanking (ire0): 4122.57 kHz
+2025-12-15 19:32:22,471 - lddecode - DEBUG - File Frame 16: VHS 
+2025-12-15 19:32:22,576 - lddecode - DEBUG - VBI serration levels 4 - Sync tip: 3818.53 kHz, Blanking (ire0): 4122.68 kHz
+2025-12-15 19:32:22,790 - lddecode - DEBUG - VBI serration levels 4 - Sync tip: 3818.59 kHz, Blanking (ire0): 4122.93 kHz
+2025-12-15 19:32:22,912 - lddecode - DEBUG - File Frame 17: VHS 
+2025-12-15 19:32:23,014 - lddecode - DEBUG - VBI serration levels 4 - Sync tip: 3818.66 kHz, Blanking (ire0): 4122.71 kHz
+2025-12-15 19:32:23,230 - lddecode - DEBUG - VBI serration levels 4 - Sync tip: 3818.38 kHz, Blanking (ire0): 4122.53 kHz
+2025-12-15 19:32:23,342 - lddecode - DEBUG - File Frame 18: VHS 
+2025-12-15 19:32:23,440 - lddecode - DEBUG - VBI serration levels 4 - Sync tip: 3818.62 kHz, Blanking (ire0): 4123.10 kHz
+2025-12-15 19:32:23,681 - lddecode - DEBUG - VBI serration levels 4 - Sync tip: 3819.02 kHz, Blanking (ire0): 4123.77 kHz
+2025-12-15 19:32:23,803 - lddecode - DEBUG - File Frame 19: VHS 
+2025-12-15 19:32:23,904 - lddecode - DEBUG - VBI serration levels 4 - Sync tip: 3818.92 kHz, Blanking (ire0): 4123.76 kHz
+2025-12-15 19:32:24,122 - lddecode - DEBUG - VBI serration levels 4 - Sync tip: 3818.98 kHz, Blanking (ire0): 4123.35 kHz
+2025-12-15 19:32:24,240 - lddecode - DEBUG - File Frame 20: VHS 
+2025-12-15 19:32:24,333 - lddecode - DEBUG - VBI serration levels 3 - Sync tip: 3821.29 kHz, Blanking (ire0): 4129.45 kHz
+2025-12-15 19:32:24,564 - lddecode - DEBUG - VBI serration levels 4 - Sync tip: 3819.13 kHz, Blanking (ire0): 4123.77 kHz
+2025-12-15 19:32:24,682 - lddecode - DEBUG - File Frame 21: VHS 
+2025-12-15 19:32:24,786 - lddecode - DEBUG - VBI serration levels 4 - Sync tip: 3819.07 kHz, Blanking (ire0): 4123.36 kHz
+2025-12-15 19:32:24,999 - lddecode - DEBUG - VBI serration levels 4 - Sync tip: 3818.82 kHz, Blanking (ire0): 4122.80 kHz
+2025-12-15 19:32:25,133 - lddecode - DEBUG - File Frame 22: VHS 
+2025-12-15 19:32:25,229 - lddecode - DEBUG - VBI serration levels 4 - Sync tip: 3818.78 kHz, Blanking (ire0): 4123.14 kHz
+2025-12-15 19:32:25,448 - lddecode - DEBUG - VBI serration levels 3 - Sync tip: 3817.60 kHz, Blanking (ire0): 4124.29 kHz
+2025-12-15 19:32:25,576 - lddecode - DEBUG - File Frame 23: VHS 
+2025-12-15 19:32:25,682 - lddecode - DEBUG - VBI serration levels 4 - Sync tip: 3819.56 kHz, Blanking (ire0): 4124.24 kHz
+2025-12-15 19:32:25,892 - lddecode - DEBUG - VBI serration levels 4 - Sync tip: 3819.44 kHz, Blanking (ire0): 4123.89 kHz
+2025-12-15 19:32:26,009 - lddecode - DEBUG - File Frame 24: VHS 
+2025-12-15 19:32:26,108 - lddecode - DEBUG - VBI serration levels 3 - Sync tip: 3821.52 kHz, Blanking (ire0): 4129.59 kHz
+2025-12-15 19:32:26,346 - lddecode - DEBUG - VBI serration levels 3 - Sync tip: 3817.45 kHz, Blanking (ire0): 4123.79 kHz
+2025-12-15 19:32:26,458 - lddecode - DEBUG - File Frame 25: VHS 
+2025-12-15 19:32:26,553 - lddecode - DEBUG - VBI serration levels 3 - Sync tip: 3821.32 kHz, Blanking (ire0): 4129.54 kHz
+2025-12-15 19:32:26,784 - lddecode - DEBUG - VBI serration levels 4 - Sync tip: 3819.26 kHz, Blanking (ire0): 4122.97 kHz
+2025-12-15 19:32:26,909 - lddecode - DEBUG - File Frame 26: VHS 
+2025-12-15 19:32:27,006 - lddecode - DEBUG - VBI serration levels 4 - Sync tip: 3818.78 kHz, Blanking (ire0): 4122.97 kHz
+2025-12-15 19:32:27,232 - lddecode - DEBUG - VBI serration levels 4 - Sync tip: 3818.20 kHz, Blanking (ire0): 4122.71 kHz
+2025-12-15 19:32:27,356 - lddecode - DEBUG - File Frame 27: VHS 
+2025-12-15 19:32:27,462 - lddecode - DEBUG - VBI serration levels 4 - Sync tip: 3818.45 kHz, Blanking (ire0): 4123.18 kHz
+2025-12-15 19:32:27,671 - lddecode - DEBUG - VBI serration levels 3 - Sync tip: 3816.98 kHz, Blanking (ire0): 4123.37 kHz
+2025-12-15 19:32:27,802 - lddecode - DEBUG - File Frame 28: VHS 
+2025-12-15 19:32:27,907 - lddecode - DEBUG - VBI serration levels 4 - Sync tip: 3818.29 kHz, Blanking (ire0): 4123.17 kHz
+2025-12-15 19:32:28,122 - lddecode - DEBUG - VBI serration levels 4 - Sync tip: 3818.20 kHz, Blanking (ire0): 4122.65 kHz
+2025-12-15 19:32:28,254 - lddecode - DEBUG - File Frame 29: VHS 
+2025-12-15 19:32:28,355 - lddecode - DEBUG - VBI serration levels 4 - Sync tip: 3818.59 kHz, Blanking (ire0): 4122.68 kHz
+2025-12-15 19:32:28,582 - lddecode - DEBUG - VBI serration levels 3 - Sync tip: 3817.24 kHz, Blanking (ire0): 4123.10 kHz
+2025-12-15 19:32:28,716 - lddecode - DEBUG - File Frame 30: VHS 
+2025-12-15 19:32:28,817 - lddecode - DEBUG - VBI serration levels 4 - Sync tip: 3818.61 kHz, Blanking (ire0): 4122.98 kHz
+2025-12-15 19:32:29,046 - lddecode - DEBUG - VBI serration levels 4 - Sync tip: 3818.72 kHz, Blanking (ire0): 4122.81 kHz
+2025-12-15 19:32:29,184 - lddecode - DEBUG - File Frame 31: VHS 
+2025-12-15 19:32:29,284 - lddecode - DEBUG - VBI serration levels 4 - Sync tip: 3818.57 kHz, Blanking (ire0): 4122.94 kHz
+2025-12-15 19:32:29,522 - lddecode - DEBUG - VBI serration levels 4 - Sync tip: 3818.29 kHz, Blanking (ire0): 4122.96 kHz
+2025-12-15 19:32:29,632 - lddecode - DEBUG - File Frame 32: VHS 
+2025-12-15 19:32:29,734 - lddecode - DEBUG - VBI serration levels 4 - Sync tip: 3818.74 kHz, Blanking (ire0): 4123.36 kHz
+2025-12-15 19:32:29,976 - lddecode - DEBUG - VBI serration levels 4 - Sync tip: 3819.28 kHz, Blanking (ire0): 4123.74 kHz
+2025-12-15 19:32:30,105 - lddecode - DEBUG - File Frame 33: VHS 
+2025-12-15 19:32:30,213 - lddecode - DEBUG - VBI serration levels 4 - Sync tip: 3819.28 kHz, Blanking (ire0): 4123.52 kHz
+2025-12-15 19:32:30,429 - lddecode - DEBUG - VBI serration levels 3 - Sync tip: 3817.70 kHz, Blanking (ire0): 4123.05 kHz
+2025-12-15 19:32:30,558 - lddecode - DEBUG - File Frame 34: VHS 
+2025-12-15 19:32:30,655 - lddecode - DEBUG - VBI serration levels 4 - Sync tip: 3818.83 kHz, Blanking (ire0): 4122.73 kHz
+2025-12-15 19:32:30,870 - lddecode - DEBUG - VBI serration levels 3 - Sync tip: 3817.67 kHz, Blanking (ire0): 4123.38 kHz
+2025-12-15 19:32:31,002 - lddecode - DEBUG - File Frame 35: VHS 
+2025-12-15 19:32:31,108 - lddecode - DEBUG - VBI serration levels 4 - Sync tip: 3818.83 kHz, Blanking (ire0): 4123.40 kHz
+2025-12-15 19:32:31,336 - lddecode - DEBUG - VBI serration levels 4 - Sync tip: 3818.54 kHz, Blanking (ire0): 4123.08 kHz
+2025-12-15 19:32:31,464 - lddecode - DEBUG - File Frame 36: VHS 
+2025-12-15 19:32:31,564 - lddecode - DEBUG - VBI serration levels 3 - Sync tip: 3820.65 kHz, Blanking (ire0): 4129.51 kHz
+2025-12-15 19:32:31,798 - lddecode - DEBUG - VBI serration levels 4 - Sync tip: 3818.72 kHz, Blanking (ire0): 4123.02 kHz
+2025-12-15 19:32:31,916 - lddecode - DEBUG - File Frame 37: VHS 
+2025-12-15 19:32:32,020 - lddecode - DEBUG - VBI serration levels 3 - Sync tip: 3820.68 kHz, Blanking (ire0): 4129.68 kHz
+2025-12-15 19:32:32,239 - lddecode - DEBUG - VBI serration levels 3 - Sync tip: 3817.45 kHz, Blanking (ire0): 4122.61 kHz
+2025-12-15 19:32:32,372 - lddecode - DEBUG - File Frame 38: VHS 
+2025-12-15 19:32:32,478 - lddecode - DEBUG - VBI serration levels 4 - Sync tip: 3819.14 kHz, Blanking (ire0): 4122.55 kHz
+2025-12-15 19:32:32,696 - lddecode - DEBUG - VBI serration levels 3 - Sync tip: 3817.42 kHz, Blanking (ire0): 4123.06 kHz
+2025-12-15 19:32:32,834 - lddecode - DEBUG - File Frame 39: VHS 
+2025-12-15 19:32:32,934 - lddecode - DEBUG - VBI serration levels 4 - Sync tip: 3818.55 kHz, Blanking (ire0): 4122.91 kHz
+2025-12-15 19:32:33,156 - lddecode - DEBUG - VBI serration levels 3 - Sync tip: 3817.24 kHz, Blanking (ire0): 4123.03 kHz
+2025-12-15 19:32:33,280 - lddecode - DEBUG - File Frame 40: VHS 
+2025-12-15 19:32:33,378 - lddecode - DEBUG - VBI serration levels 3 - Sync tip: 3821.05 kHz, Blanking (ire0): 4129.38 kHz
+2025-12-15 19:32:33,614 - lddecode - DEBUG - VBI serration levels 4 - Sync tip: 3819.16 kHz, Blanking (ire0): 4123.95 kHz
+2025-12-15 19:32:33,730 - lddecode - DEBUG - File Frame 41: VHS 
+2025-12-15 19:32:33,827 - lddecode - DEBUG - VBI serration levels 4 - Sync tip: 3819.09 kHz, Blanking (ire0): 4123.53 kHz
+2025-12-15 19:32:34,064 - lddecode - DEBUG - VBI serration levels 4 - Sync tip: 3819.36 kHz, Blanking (ire0): 4123.38 kHz
+2025-12-15 19:32:34,194 - lddecode - DEBUG - File Frame 42: VHS 
+2025-12-15 19:32:34,296 - lddecode - DEBUG - VBI serration levels 4 - Sync tip: 3819.29 kHz, Blanking (ire0): 4123.29 kHz
+2025-12-15 19:32:34,538 - lddecode - DEBUG - VBI serration levels 4 - Sync tip: 3818.88 kHz, Blanking (ire0): 4123.01 kHz
+2025-12-15 19:32:34,658 - lddecode - DEBUG - File Frame 43: VHS 
+2025-12-15 19:32:34,757 - lddecode - DEBUG - VBI serration levels 4 - Sync tip: 3818.58 kHz, Blanking (ire0): 4122.84 kHz
+2025-12-15 19:32:35,001 - lddecode - DEBUG - VBI serration levels 4 - Sync tip: 3818.46 kHz, Blanking (ire0): 4123.04 kHz
+2025-12-15 19:32:35,122 - lddecode - DEBUG - File Frame 44: VHS 
+2025-12-15 19:32:35,225 - lddecode - DEBUG - VBI serration levels 4 - Sync tip: 3818.61 kHz, Blanking (ire0): 4123.37 kHz
+2025-12-15 19:32:35,461 - lddecode - DEBUG - VBI serration levels 4 - Sync tip: 3818.75 kHz, Blanking (ire0): 4123.57 kHz
+2025-12-15 19:32:35,592 - lddecode - DEBUG - File Frame 45: VHS 
+2025-12-15 19:32:35,690 - lddecode - DEBUG - VBI serration levels 4 - Sync tip: 3818.81 kHz, Blanking (ire0): 4123.33 kHz
+2025-12-15 19:32:35,908 - lddecode - DEBUG - VBI serration levels 3 - Sync tip: 3817.12 kHz, Blanking (ire0): 4123.13 kHz
+2025-12-15 19:32:36,047 - lddecode - DEBUG - File Frame 46: VHS 
+2025-12-15 19:32:36,149 - lddecode - DEBUG - VBI serration levels 4 - Sync tip: 3818.88 kHz, Blanking (ire0): 4123.27 kHz
+2025-12-15 19:32:36,372 - lddecode - DEBUG - VBI serration levels 4 - Sync tip: 3818.95 kHz, Blanking (ire0): 4122.82 kHz
+2025-12-15 19:32:36,492 - lddecode - DEBUG - File Frame 47: VHS 
+2025-12-15 19:32:36,589 - lddecode - DEBUG - VBI serration levels 4 - Sync tip: 3818.86 kHz, Blanking (ire0): 4122.82 kHz
+2025-12-15 19:32:36,818 - lddecode - DEBUG - VBI serration levels 4 - Sync tip: 3818.98 kHz, Blanking (ire0): 4123.19 kHz
+2025-12-15 19:32:36,944 - lddecode - DEBUG - File Frame 48: VHS 
+2025-12-15 19:32:37,039 - lddecode - DEBUG - VBI serration levels 3 - Sync tip: 3820.94 kHz, Blanking (ire0): 4129.27 kHz
+2025-12-15 19:32:37,275 - lddecode - DEBUG - VBI serration levels 4 - Sync tip: 3818.76 kHz, Blanking (ire0): 4123.02 kHz
+2025-12-15 19:32:37,400 - lddecode - DEBUG - File Frame 49: VHS 
+2025-12-15 19:32:37,510 - lddecode - DEBUG - VBI serration levels 3 - Sync tip: 3820.67 kHz, Blanking (ire0): 4129.32 kHz
+2025-12-15 19:32:37,715 - lddecode - DEBUG - VBI serration levels 3 - Sync tip: 3817.19 kHz, Blanking (ire0): 4123.13 kHz
+2025-12-15 19:32:37,844 - lddecode - DEBUG - File Frame 50: VHS 

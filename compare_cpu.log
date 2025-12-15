@@ -1,0 +1,14 @@
+2025-12-15 18:31:49,166 - lddecode - DEBUG - VBI EQ serration pulses search failed (using fallback logic)
+2025-12-15 18:31:49,508 - lddecode - DEBUG - VBI serration levels 3 - Sync tip: 3819.05 kHz, Blanking (ire0): 4123.07 kHz
+2025-12-15 18:31:49,613 - lddecode - DEBUG - VBI serration levels 3 - Sync tip: 3817.65 kHz, Blanking (ire0): 4123.01 kHz
+2025-12-15 18:31:49,662 - lddecode - DEBUG - Trying to detect PAL track phase...
+2025-12-15 18:31:49,772 - lddecode - DEBUG - Phase previously set: 0
+2025-12-15 18:31:49,772 - lddecode - DEBUG - phase0 mean: 2705.79
+2025-12-15 18:31:49,775 - lddecode - DEBUG - phase1 mean: 126.41
+2025-12-15 18:31:49,775 - lddecode - DEBUG - assumed_phase: 0
+2025-12-15 18:31:49,909 - lddecode - DEBUG - VBI serration levels 4 - Sync tip: 3819.43 kHz, Blanking (ire0): 4123.48 kHz
+2025-12-15 18:31:50,051 - lddecode - DEBUG - VBI serration levels 4 - Sync tip: 3819.29 kHz, Blanking (ire0): 4123.34 kHz
+2025-12-15 18:31:50,093 - lddecode - DEBUG - File Frame 1: VHS 
+2025-12-15 18:31:50,183 - lddecode - DEBUG - VBI serration levels 3 - Sync tip: 3821.10 kHz, Blanking (ire0): 4129.58 kHz
+2025-12-15 18:31:50,315 - lddecode - DEBUG - VBI serration levels 4 - Sync tip: 3818.94 kHz, Blanking (ire0): 4123.08 kHz
+2025-12-15 18:31:50,357 - lddecode - DEBUG - File Frame 2: VHS 

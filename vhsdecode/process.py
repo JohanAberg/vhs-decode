@@ -165,13 +165,32 @@ class VHSDecode(ldd.LDdecode):
         # Restore init functino now that superclass constructor is finished.
         ldd.DemodCache.__init__ = temp_init
 
+        # Async I/O wrapper
+        # Enable by default if not explicitly disabled
+        if extra_options.get("async_io", True):
+            from vhsdecode.async_loader import AsyncLoader
+            # Calculate blocksize as DemodCache does
+            blocksize = self.rf.blocklen - (self.rf.blockcut + self.rf.blockcut_end)
+            # Increase queue size to support larger prefetch
+            self.freader = AsyncLoader(self.freader, self.infile, blocksize, self.rf.blocklen, queue_size=128)
+
+        # Increase cache size for GPU to allow more prefetching
+        cachesize = 256
+        if use_gpu:
+            cachesize = 1024
+
         self.demodcache = DemodCacheTape(
             self.rf,
             self.infile,
             self.freader,
             self.rf_opts,
             num_worker_threads=self.numthreads,
+            cachesize=cachesize,
         )
+
+        # Inject cache into GPU decoder for internal batching
+        if use_gpu and hasattr(self.rf, "set_cache"):
+            self.rf.set_cache(self.demodcache)
 
         if fname_out is not None and self.rf.options.write_chroma:
             self.outfile_chroma = open(fname_out + "_chroma.tbc", "wb")
