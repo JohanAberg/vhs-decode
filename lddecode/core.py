@@ -3640,8 +3640,23 @@ class LDdecode:
 
         self.verboseVITS = False
 
+        # Extract batch processing options from extra_options
+        use_batch_processing = extra_options.get("use_batch_processing", False)
+        batch_size = extra_options.get("batch_size", None)
+        
+        # Use batch size from RF decoder if available and not explicitly set
+        if batch_size is None and hasattr(self.rf, 'batch_size'):
+            batch_size = self.rf.batch_size
+        
+        # Default to 10 if still not set
+        if batch_size is None:
+            batch_size = 10
+        
         self.demodcache = DemodCache(
-            self.rf, self.infile, self.freader, self.rf_opts, num_worker_threads=self.numthreads
+            self.rf, self.infile, self.freader, self.rf_opts, 
+            num_worker_threads=self.numthreads,
+            use_batch_processing=use_batch_processing,
+            batch_size=batch_size
         )
 
         self.bw_ratios = []
