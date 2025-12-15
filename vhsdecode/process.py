@@ -128,6 +128,7 @@ class VHSDecode(ldd.LDdecode):
         # Check if GPU acceleration is requested
         use_gpu = extra_options.get("use_gpu", False)
         gpu_id = extra_options.get("gpu_id", 0)
+        optimize_transfers = extra_options.get("optimize_transfers", True)
         
         # Overwrite the rf with the VHS-altered one (GPU or CPU)
         if use_gpu:
@@ -141,6 +142,7 @@ class VHSDecode(ldd.LDdecode):
                 debug_plot=debug_plot,
                 use_gpu=True,
                 gpu_id=gpu_id,
+                optimize_transfers=optimize_transfers,
             )
         else:
             self.rf = VHSRFDecode(

@@ -187,7 +187,7 @@ Compare to CPU best: 40.61 FPS
 1. ✅ **Use 4 threads for GPU** (optimal point)
 2. ✅ **Use 8 threads for CPU** (maximum scaling)
 3. ✅ **Document transfer bottleneck** (completed)
-4. ⏭️ **Begin Phase 2 optimization** (eliminate transfers)
+4. ✅ **Begin Phase 2 optimization** (eliminate transfers) - **COMPLETED**
 
 ### Phase 2 Priorities
 1. **Move FM demodulation to GPU** (biggest CPU bottleneck)
@@ -210,4 +210,41 @@ The real bottleneck is the **17 CPU↔GPU transfers per block**, which creates ~
 
 **Phase 2 must focus on eliminating transfers and keeping the entire pipeline on GPU.** This will unlock the 3-12x speedup that the GPU is capable of delivering.
 
-**Status:** Thread count investigation complete. Optimal configuration identified (CPU: 8 threads, GPU: 4 threads). Ready to begin Phase 2 optimization focused on transfer elimination.
+**Status:** Thread count investigation complete. Optimal configuration identified (CPU: 8 threads, GPU: 4 threads). **Phase 2 optimization implemented** - see `GPU_PHASE2_IMPLEMENTATION.md` for details.
+
+---
+
+## Phase 2 Update (December 14, 2025)
+
+### Implementation Complete ✅
+
+Phase 2 optimizations have been implemented to eliminate the transfer bottleneck:
+
+**Changes Made:**
+1. Created `gpu_demod.py` with GPU-accelerated operations:
+   - `unwrap_hilbert_gpu()` - FM demodulation on GPU
+   - `replace_spikes_gpu()` - Spike replacement on GPU
+   - `envelope_filter_gpu()` - Envelope filtering on GPU
+   - `nonlinear_deemphasis_gpu()` - NL deemphasis on GPU
+
+2. Added optimized pipeline in `process_gpu.py`:
+   - `_demodblock_gpu_optimized()` method
+   - Reduces transfers from 17 to 2-3 per block
+   - Keeps entire pipeline on GPU
+
+3. Added command-line control:
+   - `--gpu-optimize-transfers` (default: enabled)
+   - `--no-gpu-optimize-transfers` (Phase 1 mode)
+
+**Expected Results:**
+- Transfer reduction: 85-88% (17 → 2-3 transfers)
+- Speedup target: 3-6x over CPU (vs 0.87x in Phase 1)
+- Memory usage: 3-5 MB VRAM per block (slightly higher than Phase 1)
+
+**Testing Status:**
+- ✅ Syntax validation passed
+- ✅ Code review ready
+- ⏳ Unit tests with GPU hardware
+- ⏳ Benchmarks to confirm speedup
+
+See `GPU_PHASE2_IMPLEMENTATION.md` for complete details.
