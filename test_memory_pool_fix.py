@@ -82,20 +82,24 @@ def test_scenario():
     print("\n3. Test 6 (NEW - with fix): Large allocation (3 GB)")
     print("-"*70)
     
-    # NEW CODE: Reset limit before allocation
-    print("  Applying fix: Reset limit to 95% of total VRAM...")
+    # NEW CODE: Calculate final limit upfront, set it BEFORE allocation
+    print("  Applying fix: Calculate final limit and set BEFORE allocation...")
+    
+    # Calculate final pool limit upfront (same logic as gpu_utils.py)
+    pool_limit_test6 = min(pool_size_test6 * 2, int(mem_total * 0.9))
+    
     current_limit = mempool.get_limit()
     if current_limit > 0 and pool_size_test6 > current_limit:
-        print(f"  Current limit ({current_limit/1e9:.2f} GB) too low for {pool_size_test6/1e9:.2f} GB")
-        mempool.set_limit(int(mem_total * 0.95))
+        print(f"  Current limit ({current_limit/1e9:.2f} GB) too low for {pool_size_test6/1e9:.2f} GB allocation")
+        print(f"  Increasing pool limit to {pool_limit_test6/1e9:.2f} GB BEFORE allocation...")
+        mempool.set_limit(pool_limit_test6)
+    elif current_limit == 0:
+        print(f"  No limit set yet, setting to {pool_limit_test6/1e9:.2f} GB...")
+        mempool.set_limit(pool_limit_test6)
     
     try:
         mempool.allocate(pool_size_test6)
         print(f"✓ NEW CODE succeeds: allocated {pool_size_test6/1e9:.2f} GB")
-        
-        # Set final limit
-        pool_limit_test6 = min(pool_size_test6 * 2, int(mem_total * 0.9))
-        mempool.set_limit(pool_limit_test6)
         print(f"  Final limit: {pool_limit_test6/1e9:.2f} GB")
         
     except Exception as e:

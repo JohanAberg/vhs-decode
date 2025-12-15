@@ -480,20 +480,24 @@ def setup_gpu_memory_pools(blocklen, batch_size=10, target_vram_usage_gb=2.0):
         mempool = cp.get_default_memory_pool()
         current_limit = mempool.get_limit()
         
-        # If current limit is too low, increase it temporarily for allocation
+        # Calculate final pool limit upfront
+        # Allow 2x the pool size for safety margin
+        pool_limit = min(pool_size * 2, int(mem_total * 0.9))  # Max 90% of total VRAM
+        
+        # If current limit is too low, increase it BEFORE allocation attempt
+        # Must set limit before any allocation that exceeds current limit
         if current_limit > 0 and pool_size > current_limit:
-            logger.info(f"Current pool limit ({current_limit/1e9:.2f} GB) too low, increasing temporarily...")
-            mempool.set_limit(size=int(mem_total * 0.95))  # Allow up to 95% during allocation
+            logger.info(f"Current pool limit ({current_limit/1e9:.2f} GB) too low for {pool_size/1e9:.2f} GB allocation")
+            logger.info(f"Increasing pool limit to {pool_limit/1e9:.2f} GB...")
+            mempool.set_limit(size=pool_limit)
+        elif current_limit == 0:
+            # No limit set yet, set it now
+            mempool.set_limit(size=pool_limit)
         
         # Allocate and free to setup the pool (this initializes the memory pool)
         logger.info(f"Initializing memory pool with {pool_size/1e6:.2f} MB...")
         dummy = cp.empty(pool_size, dtype=cp.uint8)
         del dummy
-        
-        # Set memory pool limit to prevent excessive growth
-        # Allow 2x the pool size for safety margin
-        pool_limit = min(pool_size * 2, int(mem_total * 0.9))  # Max 90% of total VRAM
-        mempool.set_limit(size=pool_limit)
         
         logger.info(f"GPU memory pool configured:")
         logger.info(f"  Initial pool: {pool_size/1e6:.2f} MB")
