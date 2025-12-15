@@ -72,6 +72,7 @@ class VHSRFDecodeGPU(VHSRFDecode):
         # Extract extra_options for profiling before calling super().__init__
         extra_options = kwargs.get('extra_options', {})
         self.enable_profiling = extra_options.get('enable_profiling', False)
+        use_fused_fm_kernel = extra_options.get('use_fused_fm_kernel', True)
         
         # Initialize parent class first
         super().__init__(*args, **kwargs)
@@ -80,6 +81,15 @@ class VHSRFDecodeGPU(VHSRFDecode):
         self.use_gpu = use_gpu and GPU_AVAILABLE
         self.gpu_id = gpu_id
         self.optimize_transfers = optimize_transfers
+        
+        # Set global flag for fused FM kernel (Phase 4 optimization)
+        if self.use_gpu and GPU_AVAILABLE:
+            import vhsdecode.gpu_demod as gpu_demod_module
+            gpu_demod_module.USE_FUSED_FM_KERNEL = use_fused_fm_kernel
+            if use_fused_fm_kernel:
+                logger.info("Fused FM demodulation kernel enabled (Phase 4)")
+            else:
+                logger.info("Fused FM kernel disabled (using separate operations)")
         
         if not GPU_AVAILABLE and use_gpu:
             logger.warning(

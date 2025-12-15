@@ -368,6 +368,19 @@ def main(args=None, use_gui=False):
         help="Number of blocks to process per GPU batch (default: auto-detect based on VRAM). "
              "Larger batches reduce overhead but use more VRAM. Range: 10-100.",
     )
+    gpu_group.add_argument(
+        "--fused-fm-kernel",
+        dest="use_fused_fm_kernel",
+        action="store_true",
+        default=True,
+        help="Use fused FM demodulation CUDA kernel for ~4× speedup (Phase 4, default: enabled).",
+    )
+    gpu_group.add_argument(
+        "--no-fused-fm-kernel",
+        dest="use_fused_fm_kernel",
+        action="store_false",
+        help="Disable fused FM kernel (use separate CuPy operations for debugging).",
+    )
 
     args = parser.parse_args(args)
 
@@ -465,6 +478,7 @@ def main(args=None, use_gui=False):
     extra_options["enable_profiling"] = args.gpu_profile
     extra_options["use_batch_processing"] = args.use_batch_processing
     extra_options["batch_size"] = args.batch_size
+    extra_options["use_fused_fm_kernel"] = args.use_fused_fm_kernel
 
     # Wrap the LDdecode creation so that the signal handler is not taken by sub-threads,
     # allowing SIGINT/control-C's to be handled cleanly
