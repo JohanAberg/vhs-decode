@@ -11,6 +11,7 @@ from pathlib import Path
 
 # Import GPU utilities
 from vhsdecode.gpu_utils import GPU_AVAILABLE, get_array_module, get_gpu_info, free_gpu_memory
+from vhsdecode.cuda_kernels.fused_fm_demod import unwrap_hilbert_gpu_fused, is_fused_kernel_available
 
 # Conditional import of cupy with CUDA error handling
 if GPU_AVAILABLE:
@@ -31,6 +32,15 @@ if GPU_AVAILABLE:
 else:
     CUDA_FUNCTIONAL = False
     cp = None
+
+if CUDA_FUNCTIONAL:
+    try:
+        FUSED_KERNEL_AVAILABLE = bool(is_fused_kernel_available())
+    except Exception as e:
+        FUSED_KERNEL_AVAILABLE = False
+        print(f"Warning: Fused FM kernel not available: {e}")
+else:
+    FUSED_KERNEL_AVAILABLE = False
 
 
 # Skip all GPU tests if GPU is not available
@@ -293,6 +303,32 @@ class TestGPUPrecision:
         
         # Compare power spectrum (more forgiving than complex values)
         np.testing.assert_allclose(cpu_power, gpu_power_cpu, rtol=1e-4, atol=1e-4)
+
+
+class TestFusedFMDemod:
+    """Test fused FM demodulation kernel output."""
+
+    @pytest.mark.skipif(not FUSED_KERNEL_AVAILABLE, reason="Fused FM kernel not available")
+    def test_fused_fm_matches_reference(self):
+        """Fused kernel should match reference CuPy ops, including angle wrap."""
+        freq_hz = 40_000_000.0
+        angles = cp.asarray([
+            0.0,
+            0.5 * cp.pi,
+            cp.pi,
+            -0.75 * cp.pi,
+            -0.5 * cp.pi,
+            -0.25 * cp.pi,
+        ], dtype=cp.float64)
+        hilbert = cp.exp(1j * angles)
+
+        fused = unwrap_hilbert_gpu_fused(hilbert, freq_hz)
+
+        phase_diff = cp.angle(hilbert[1:] * cp.conj(hilbert[:-1]))
+        phase_diff = cp.where(phase_diff < 0, phase_diff + 2.0 * cp.pi, phase_diff)
+        expected = cp.concatenate([cp.zeros(1, dtype=cp.float64), phase_diff]) * (freq_hz / (2.0 * cp.pi))
+
+        np.testing.assert_allclose(cp.asnumpy(fused), cp.asnumpy(expected), rtol=1e-12, atol=1e-12)
 
 
 if __name__ == "__main__":

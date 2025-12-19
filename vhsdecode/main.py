@@ -351,6 +351,13 @@ def main(args=None, use_gui=False):
         help="Enable GPU profiling to measure performance of different operations. "
              "Prints detailed timing breakdown at end of decode.",
     )
+    parser.add_argument(
+        "--no-json-output",
+        dest="disable_json_output",
+        action="store_true",
+        default=False,
+        help="Skip writing .tbc.json during decode (improves performance)."
+    )
     gpu_group.add_argument(
         "--batch-processing",
         dest="use_batch_processing",
@@ -366,7 +373,7 @@ def main(args=None, use_gui=False):
         type=int,
         default=None,
         help="Number of blocks to process per GPU batch (default: auto-detect based on VRAM). "
-             "Larger batches reduce overhead but use more VRAM. Range: 10-100.",
+             "Larger batches reduce overhead but use more VRAM. Minimum: 10.",
     )
     gpu_group.add_argument(
         "--fused-fm-kernel",
@@ -527,12 +534,14 @@ def main(args=None, use_gui=False):
 
     done = False
 
-    jsondumper = lddu.jsondump_thread(vhsd, outname)
+    jsondumper = None if args.disable_json_output else lddu.jsondump_thread(vhsd, outname)
 
     def cleanup():
-        jsondumper.put(vhsd.build_json())
+        if jsondumper:
+            jsondumper.put(vhsd.build_json())
         vhsd.close()
-        jsondumper.put(None)
+        if jsondumper:
+            jsondumper.put(None)
 
     # TODO: Put the stuff below this in a function so we can re-use for both vhs and cvbs
 
@@ -566,7 +575,7 @@ def main(args=None, use_gui=False):
         else:
             f.prevfield = None
 
-        if vhsd.fields_written < 100 or ((vhsd.fields_written % 500) == 0):
+        if jsondumper and (vhsd.fields_written < 100 or ((vhsd.fields_written % 500) == 0)):
             jsondumper.put(vhsd.build_json())
 
     if vhsd.fields_written:

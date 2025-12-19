@@ -127,12 +127,14 @@ def free_gpu_memory():
             logger.warning(f"Failed to free GPU memory: {e}")
 
 
-def transfer_to_gpu(data):
+def transfer_to_gpu(data, stream=None):
     """
     Transfer numpy array to GPU if available.
+    Uses optimized asynchronous transfer for better performance.
     
     Args:
         data: numpy array or cupy array
+        stream: Optional CUDA stream for async transfer
         
     Returns:
         cupy array if GPU available, else original numpy array
@@ -144,20 +146,30 @@ def transfer_to_gpu(data):
     if isinstance(data, cp.ndarray):
         return data
     
-    # Transfer to GPU
+    # Transfer to GPU with optimized path
     try:
-        return cp.asarray(data)
+        # Use asarray which is optimized for contiguous arrays
+        # CuPy automatically uses pinned memory when beneficial
+        if stream is not None:
+            # Async transfer if stream provided
+            gpu_array = cp.empty(data.shape, dtype=data.dtype)
+            gpu_array.set(data, stream=stream)
+            return gpu_array
+        else:
+            return cp.asarray(data)
     except Exception as e:
         logger.warning(f"Failed to transfer data to GPU: {e}")
         return data
 
 
-def transfer_from_gpu(data):
+def transfer_from_gpu(data, stream=None):
     """
     Transfer array from GPU to CPU.
+    Uses optimized asynchronous transfer for better performance.
     
     Args:
         data: cupy array or numpy array
+        stream: Optional CUDA stream for async transfer
         
     Returns:
         numpy array
@@ -169,9 +181,14 @@ def transfer_from_gpu(data):
     if not isinstance(data, cp.ndarray):
         return data
     
-    # Transfer from GPU
+    # Transfer from GPU with optimized path
     try:
-        return cp.asnumpy(data)
+        if stream is not None:
+            # Async transfer if stream provided
+            cpu_array = cp.asnumpy(data, stream=stream)
+            return cpu_array
+        else:
+            return cp.asnumpy(data)
     except Exception as e:
         logger.warning(f"Failed to transfer data from GPU: {e}")
         return data
@@ -185,6 +202,45 @@ class GPUError(Exception):
 class GPUOutOfMemoryError(GPUError):
     """Raised when GPU runs out of memory."""
     pass
+
+
+class StreamManager:
+    """
+    Manages CUDA streams for overlapping data transfers and computation.
+    
+    Usage:
+        with StreamManager() as streams:
+            # Transfer on stream 0
+            data_gpu = transfer_to_gpu(data, stream=streams.transfer)
+            # Compute on stream 1
+            with streams.compute:
+                result = process_on_gpu(data_gpu)
+    """
+    def __init__(self):
+        self.transfer = None
+        self.compute = None
+        
+    def __enter__(self):
+        if GPU_AVAILABLE:
+            self.transfer = cp.cuda.Stream()
+            self.compute = cp.cuda.Stream()
+        return self
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if GPU_AVAILABLE:
+            if self.transfer:
+                self.transfer.synchronize()
+            if self.compute:
+                self.compute.synchronize()
+        return False
+    
+    def synchronize(self):
+        """Wait for all streams to complete."""
+        if GPU_AVAILABLE:
+            if self.transfer:
+                self.transfer.synchronize()
+            if self.compute:
+                self.compute.synchronize()
 
 
 def log_gpu_status():
