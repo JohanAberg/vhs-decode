@@ -10,7 +10,7 @@ This is a working prototype for the C++ rewrite of VHS-Decode, focusing initiall
 - ✅ Core type definitions
 - ✅ Modular format interface
 - ✅ VHS format implementation
-- ⏳ RF reader (TODO)
+- ✅ RF reader with memory-mapped I/O
 - ⏳ FFT engine (TODO)
 - ⏳ FM demodulator (TODO)
 - ⏳ TBC writer (TODO)
@@ -77,9 +77,10 @@ Release\vhs-decode.exe --help
 - ✅ Carrier frequency configuration
 - ✅ Command-line interface
 - ✅ Format/system auto-detection from parameters
+- ✅ RF file reader with memory-mapped I/O
+- ✅ Cross-platform file handling (Linux/Windows/macOS)
 
 ### TODO (Next Steps)
-- ⏳ RF file reader
 - ⏳ FFT engine (CPU + GPU)
 - ⏳ Frequency-domain filtering
 - ⏳ Hilbert transform
@@ -122,7 +123,8 @@ cpp-prototype/
 ├── CMakeLists.txt              # Root build configuration
 ├── include/
 │   ├── vhsdecode/
-│   │   └── types.hpp           # Common types and structures
+│   │   ├── types.hpp           # Common types and structures
+│   │   └── rf_reader.hpp       # RF file reader interface
 │   └── formats/
 │       ├── format_base.hpp     # Abstract format interface
 │       └── vhs_format.hpp      # VHS format implementation
@@ -130,9 +132,11 @@ cpp-prototype/
 │   ├── CMakeLists.txt          # Source build configuration
 │   ├── core/
 │   │   └── main.cpp            # Application entry point
-│   └── formats/
-│       ├── format_base.cpp     # Format utilities
-│       └── vhs_format.cpp      # VHS implementation
+│   ├── formats/
+│   │   ├── format_base.cpp     # Format utilities
+│   │   └── vhs_format.cpp      # VHS implementation
+│   └── io/
+│       └── rf_reader.cpp       # RF reader implementation
 ├── tests/                      # Unit tests (TODO)
 └── README.md                   # This file
 ```

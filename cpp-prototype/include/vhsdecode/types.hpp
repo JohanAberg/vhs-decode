@@ -56,9 +56,10 @@ struct FormatParams {
 struct RFBlock {
     std::vector<SampleU8> data;
     size_t blockNumber;
+    size_t globalOffset;
     
-    RFBlock(size_t size = 0, size_t num = 0)
-        : data(size), blockNumber(num) {}
+    RFBlock(size_t size = 0, size_t num = 0, size_t offset = 0)
+        : data(size), blockNumber(num), globalOffset(offset) {}
 };
 
 // Demodulated data

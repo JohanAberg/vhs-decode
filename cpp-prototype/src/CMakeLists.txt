@@ -2,6 +2,7 @@
 set(SOURCES
     formats/format_base.cpp
     formats/vhs_format.cpp
+    io/rf_reader.cpp
     core/main.cpp
 )
 
