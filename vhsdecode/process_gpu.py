@@ -165,14 +165,14 @@ class VHSRFDecodeGPU(VHSRFDecode):
             mem_free_gb = device.mem_info[0] / 1e9
             
             # Use aggressive batching to maximize VRAM usage
-            # Target: Use 20-30% of available VRAM for memory pools
-            target_vram_gb = min(mem_free_gb * 0.25, 3.0)  # Cap at 3GB for safety
+            # Target: Use up to 50% of available VRAM for memory pools (balance batch size vs cache)
+            target_vram_gb = min(mem_free_gb * 0.5, 6.0)  # Cap at 6GB for better cache locality
             
             # Calculate optimal batch size
             # Estimate: ~2MB per block, so 1GB can handle ~500 blocks
             estimated_mb_per_block = 2.0
             optimal_batch_size = int((target_vram_gb * 1000) / estimated_mb_per_block)
-            optimal_batch_size = max(10, min(optimal_batch_size, 100))  # Clamp to 10-100
+            optimal_batch_size = max(10, optimal_batch_size)  # Minimum 10, no upper limit
             
             from vhsdecode.gpu_utils import setup_gpu_memory_pools
             setup_gpu_memory_pools(
@@ -224,7 +224,7 @@ class VHSRFDecodeGPU(VHSRFDecode):
                 self.Filters["FEnvPost"],  # Original IIR in SOS format
                 self.freq_hz,              # Sample rate
                 self.blocklen,             # FFT block size
-                fir_length=51              # FIR filter length (shorter = faster, tune for quality vs speed)
+                fir_length=51              # FIR filter length (51 taps optimal)
             )
             
             # Store both time-domain and frequency-domain representations
@@ -400,7 +400,7 @@ class VHSRFDecodeGPU(VHSRFDecode):
         self._lazy_init_filters()
         
         import time
-        from vhsdecode.gpu_utils import demod_chroma_filt_gpu
+        from vhsdecode.gpu_utils import demod_chroma_filt_gpu, StreamManager
         
         # 1. Prepare Batch
         batch_size = 1 + len(stolen_items)
@@ -408,59 +408,68 @@ class VHSRFDecodeGPU(VHSRFDecode):
         for item in stolen_items:
             data_list.append(item[1]["rawinput"][:self.blocklen])
             
-        # Stack and transfer
+        # Stack and transfer (overlap transfers with compute using CUDA streams)
         data_stacked = np.stack(data_list)
-        data_gpu = transfer_to_gpu(data_stacked)
+        with StreamManager() as streams:
+            data_gpu = transfer_to_gpu(data_stacked, stream=streams.transfer)
+            # 2. Process Batch
+            # FFT
+            with streams.compute:
+                indata_fft_gpu = cp.fft.fft(data_gpu)
+            
+            # Hoist frequently used GPU filters to locals (reduces dict lookups)
+            FVideoNotchF = self.Filters_gpu.get("FVideoNotchF", None)
+            RFVideoF = self.Filters_gpu["RFVideo"]
+            hilbert_filter_gpu = self.Filters_gpu["hilbert"]
+            FEnvPost_FIR_freq = self.Filters_gpu["FEnvPost_FIR_freq"]
+            FVideoF = self.Filters_gpu.get("FVideo", None)
+            FVideo05F = self.Filters_gpu.get("FVideo05", None)
+            FChromaBurstF = self.Filters_gpu.get("FChromaBurst")
+
+            # Filters
+            if self._notch is not None and FVideoNotchF is not None:
+                indata_fft_gpu *= FVideoNotchF
+            indata_fft_gpu *= RFVideoF
         
-        # 2. Process Batch
-        # FFT
-        indata_fft_gpu = cp.fft.fft(data_gpu)
+            # Hilbert Envelope
+            raw_filtered_gpu = cp.fft.ifft(indata_fft_gpu * hilbert_filter_gpu).real
+            cp.abs(raw_filtered_gpu, out=raw_filtered_gpu)
+            raw_env_gpu = cp.roll(raw_filtered_gpu, 4, axis=-1)
         
-        # Filters
-        if self._notch is not None:
-            indata_fft_gpu *= self.Filters_gpu["FVideoNotchF"]
-        indata_fft_gpu *= self.Filters_gpu["RFVideo"]
+            # Envelope Filter
+            env_fft_gpu = cp.fft.rfft(raw_env_gpu)
+            env_filtered_fft_gpu = env_fft_gpu * FEnvPost_FIR_freq
+            env_gpu = cp.fft.irfft(env_filtered_fft_gpu, n=raw_env_gpu.shape[-1]).real
         
-        # Hilbert Envelope
-        hilbert_filter_gpu = self.Filters_gpu["hilbert"]
-        raw_filtered_gpu = cp.fft.ifft(indata_fft_gpu * hilbert_filter_gpu).real
-        cp.abs(raw_filtered_gpu, out=raw_filtered_gpu)
-        raw_env_gpu = cp.roll(raw_filtered_gpu, 4, axis=-1)
+            # FM Demod
+            hilbert_gpu = cp.fft.ifft(indata_fft_gpu * hilbert_filter_gpu)
+            demod_gpu = unwrap_hilbert_gpu(hilbert_gpu, self.freq_hz)
         
-        # Envelope Filter
-        env_fft_gpu = cp.fft.rfft(raw_env_gpu)
-        env_filtered_fft_gpu = env_fft_gpu * self.Filters_gpu["FEnvPost_FIR_freq"]
-        env_gpu = cp.fft.irfft(env_filtered_fft_gpu, n=raw_env_gpu.shape[-1]).real
-        
-        # FM Demod
-        hilbert_gpu = cp.fft.ifft(indata_fft_gpu * hilbert_filter_gpu)
-        demod_gpu = unwrap_hilbert_gpu(hilbert_gpu, self.freq_hz)
-        
-        # Spikes
-        if not self._disable_diff_demod:
-            check_value = self.options.diff_demod_check_value
-            max_vals = cp.max(demod_gpu[..., 20:-20], axis=-1)
-            if cp.any(max_vals > check_value):
-                hilbert_diff_gpu = cp.diff(hilbert_gpu, axis=-1)
-                zeros = cp.zeros((batch_size, 1), dtype=hilbert_gpu.dtype)
-                hilbert_diff_gpu = cp.concatenate([zeros, hilbert_diff_gpu], axis=-1)
-                
-                demod_b_gpu = unwrap_hilbert_gpu(hilbert_diff_gpu, self.freq_hz)
-                demod_gpu = replace_spikes_gpu(demod_gpu, demod_b_gpu, check_value)
+            # Spikes
+            if not self._disable_diff_demod:
+                check_value = self.options.diff_demod_check_value
+                max_vals = cp.max(demod_gpu[..., 20:-20], axis=-1)
+                if cp.any(max_vals > check_value):
+                    hilbert_diff_gpu = cp.diff(hilbert_gpu, axis=-1)
+                    # Preallocate zeros column once per batch and reuse
+                    zeros = cp.zeros((batch_size, 1), dtype=hilbert_gpu.dtype)
+                    hilbert_diff_gpu = cp.concatenate([zeros, hilbert_diff_gpu], axis=-1)
+                    demod_b_gpu = unwrap_hilbert_gpu(hilbert_diff_gpu, self.freq_hz)
+                    demod_gpu = replace_spikes_gpu(demod_gpu, demod_b_gpu, check_value)
         
         # CPU Fallbacks (Video EQ, Chroma Trap)
         if self._video_eq or self._chroma_trap:
-            demod_cpu = transfer_from_gpu(demod_gpu)
+            demod_cpu = transfer_from_gpu(demod_gpu, stream=streams.transfer)
             for i in range(batch_size):
                 if self._video_eq:
                     demod_cpu[i] = self._video_eq.filter_video(demod_cpu[i])
                 if self._chroma_trap:
                     demod_cpu[i] = self.chromaTrap.work(demod_cpu[i])
-            demod_gpu = transfer_to_gpu(demod_cpu)
+            demod_gpu = transfer_to_gpu(demod_cpu, stream=streams.transfer)
             
         # Deemphasis
-        demod_fft_gpu = cp.fft.rfft(demod_gpu)
-        out_video_fft_gpu = demod_fft_gpu * self.Filters_gpu["FVideo"]
+            out_video_fft_gpu = demod_fft_gpu * (FVideoF if FVideoF is not None else 1)
+        out_video_fft_gpu = demod_fft_gpu * FVideoF
         out_video_gpu = cp.fft.irfft(out_video_fft_gpu).real
         
         # Nonlinear Deemphasis
@@ -473,21 +482,21 @@ class VHSRFDecodeGPU(VHSRFDecode):
                 limit_low, limit_high
             )
             
-        # Video 0.5 filter
-        video05_filter_gpu = self.Filters_gpu["FVideo05"]
-        out_video05_gpu = cp.fft.irfft(demod_fft_gpu * video05_filter_gpu).real
+            out_video05_gpu = cp.fft.irfft(demod_fft_gpu * (FVideo05F if FVideo05F is not None else 1)).real
+        out_video05_gpu = cp.fft.irfft(demod_fft_gpu * FVideo05F).real
         
         # Chroma
-        chroma_gpu = demod_chroma_filt_gpu(demod_gpu, self.Filters_gpu["FChromaBurst"], self.blocklen)
+        chroma_gpu = demod_chroma_filt_gpu(demod_gpu, FChromaBurstF, self.blocklen)
         
         # Transfer results to CPU
-        out_video_cpu = transfer_from_gpu(out_video_gpu)
-        out_video05_cpu = transfer_from_gpu(out_video05_gpu)
-        chroma_cpu = transfer_from_gpu(chroma_gpu)
-        env_cpu = transfer_from_gpu(env_gpu)
+        out_video_cpu = transfer_from_gpu(out_video_gpu, stream=streams.transfer)
+        out_video05_cpu = transfer_from_gpu(out_video05_gpu, stream=streams.transfer)
+        chroma_cpu = transfer_from_gpu(chroma_gpu, stream=streams.transfer)
+        env_cpu = transfer_from_gpu(env_gpu, stream=streams.transfer)
         
-        # Roll video05
-        out_video05_cpu = np.roll(out_video05_cpu, -self.Filters["F05_offset"], axis=-1)
+        # Roll video05 on GPU before transfer to avoid GPU→CPU ping-pong
+        out_video05_gpu = cp.roll(out_video05_gpu, -self.Filters["F05_offset"], axis=-1)
+        out_video05_cpu = transfer_from_gpu(out_video05_gpu, stream=streams.transfer)
         
         # 3. Distribute Results
         current_result = None
@@ -570,13 +579,11 @@ class VHSRFDecodeGPU(VHSRFDecode):
             indata_fft_copy = transfer_from_gpu(indata_fft_gpu).copy()
         
         # Apply notch filter on GPU if needed
-        if self._notch is not None:
-            notch_filter_gpu = self.Filters_gpu["FVideoNotchF"]
-            indata_fft_gpu *= notch_filter_gpu
+        if self._notch is not None and FVideoNotchF is not None:
+            indata_fft_gpu *= FVideoNotchF
         
         # Phase 1: Apply RF filters on GPU
-        rf_filter_gpu = self.Filters_gpu["RFVideo"]
-        indata_fft_gpu *= rf_filter_gpu
+        indata_fft_gpu *= RFVideoF
         
         # Hilbert envelope calculation (GPU accelerated)
         hilbert_filter_gpu = self.Filters_gpu["hilbert"]
@@ -799,6 +806,16 @@ class VHSRFDecodeGPU(VHSRFDecode):
         # GPU synchronize at start to measure pure GPU time
         cp.cuda.Stream.null.synchronize()
         gpu_start_time = time.time()
+
+        # Hoist frequently used GPU filters to locals to cut dict lookups
+        FVideoNotchF = self.Filters_gpu.get("FVideoNotchF")
+        RFVideoF = self.Filters_gpu["RFVideo"]
+        hilbert_filter_gpu = self.Filters_gpu["hilbert"]
+        FEnvPost_FIR_freq = self.Filters_gpu["FEnvPost_FIR_freq"]
+        FVideoF = self.Filters_gpu["FVideo"]
+        FVideo05F = self.Filters_gpu["FVideo05"]
+        NLHighPassF = self.Filters_gpu.get("NLHighPassF")
+        FChromaBurstF = self.Filters_gpu.get("FVideoBurst_freq", self.Filters_gpu.get("FChromaBurst"))
         
         # logger.info(f"GPU demodblock Phase 2 started - device: {cp.cuda.Device()}")
         
@@ -832,13 +849,11 @@ class VHSRFDecodeGPU(VHSRFDecode):
         if profiler:
             profiler.start("2_notch_and_rf_filters")
         
-        if self._notch is not None:
-            notch_filter_gpu = self.Filters_gpu["FVideoNotchF"]
-            indata_fft_gpu *= notch_filter_gpu
+        if self._notch is not None and FVideoNotchF is not None:
+            indata_fft_gpu *= FVideoNotchF
         
         # Apply RF filters (GPU)
-        rf_filter_gpu = self.Filters_gpu["RFVideo"]
-        indata_fft_gpu *= rf_filter_gpu
+        indata_fft_gpu *= RFVideoF
         
         if profiler:
             profiler.stop()
@@ -847,8 +862,9 @@ class VHSRFDecodeGPU(VHSRFDecode):
         if profiler:
             profiler.start("3_hilbert_ifft")
         
-        hilbert_filter_gpu = self.Filters_gpu["hilbert"]
-        raw_filtered_gpu = cp.fft.ifft(indata_fft_gpu * hilbert_filter_gpu).real
+        # Optimize: Apply filter in-place before iFFT
+        indata_fft_gpu *= hilbert_filter_gpu
+        raw_filtered_gpu = cp.fft.ifft(indata_fft_gpu).real
         
         if profiler:
             profiler.stop()
@@ -872,14 +888,15 @@ class VHSRFDecodeGPU(VHSRFDecode):
             profiler.start("5_envelope_filter_gpu")
         
         # Apply FIR filter using FFT convolution on GPU (7-8x faster than CPU IIR)
+        # Optimize: Use in-place operations to reduce memory allocations
         env_fft_gpu = cp.fft.rfft(raw_env_gpu)
-        env_filtered_fft_gpu = env_fft_gpu * self.Filters_gpu["FEnvPost_FIR_freq"]
-        env_gpu = cp.fft.irfft(env_filtered_fft_gpu).real
+        env_fft_gpu *= FEnvPost_FIR_freq  # In-place multiplication
+        env_gpu = cp.fft.irfft(env_fft_gpu)  # irfft already returns real, no need for .real
         
         # Calculate mean on GPU
         env_mean = float(cp.mean(env_gpu))
         
-        del raw_env_gpu, env_fft_gpu, env_filtered_fft_gpu
+        del raw_env_gpu, env_fft_gpu
         
         if profiler:
             profiler.stop()
@@ -974,17 +991,15 @@ class VHSRFDecodeGPU(VHSRFDecode):
         demod_fft_gpu = cp.fft.rfft(demod_gpu)
         
         # Apply video filter (GPU)
-        video_filter_gpu = self.Filters_gpu["FVideo"]
-        out_video_fft_gpu = demod_fft_gpu * video_filter_gpu
+        out_video_fft_gpu = demod_fft_gpu * FVideoF
         out_video_gpu = cp.fft.irfft(out_video_fft_gpu).real
         
         # Nonlinear deemphasis (GPU) - Phase 2 optimization
         if self.options.nldeemp:
             try:
-                nl_filter_gpu = self.Filters_gpu.get("NLHighPassF")
-                if nl_filter_gpu is not None:
+                if NLHighPassF is not None:
                     out_video_gpu = nonlinear_deemphasis_gpu(
-                        out_video_gpu, out_video_fft_gpu, nl_filter_gpu,
+                        out_video_gpu, out_video_fft_gpu, NLHighPassF,
                         self.DecoderParams["nonlinear_highpass_limit_l"],
                         self.DecoderParams["nonlinear_highpass_limit_h"]
                     )
@@ -1041,8 +1056,7 @@ class VHSRFDecodeGPU(VHSRFDecode):
                 profiler.stop()
         
         # Video 0.5 filter (GPU)
-        video05_filter_gpu = self.Filters_gpu["FVideo05"]
-        out_video05_gpu = cp.fft.irfft(demod_fft_gpu * video05_filter_gpu).real
+        out_video05_gpu = cp.fft.irfft(demod_fft_gpu * FVideo05F).real
         del demod_fft_gpu
         
         # === TRANSFER 2: Transfer final results back to CPU ===
@@ -1050,6 +1064,8 @@ class VHSRFDecodeGPU(VHSRFDecode):
             profiler.start("7_final_transfer_to_cpu")
         
         out_video = transfer_from_gpu(out_video_gpu)
+        # Roll on GPU before transfer to avoid extra CPU work
+        out_video05_gpu = cp.roll(out_video05_gpu, -self.Filters["F05_offset"])
         out_video05 = transfer_from_gpu(out_video05_gpu)
         env = transfer_from_gpu(env_gpu)
         
@@ -1058,8 +1074,6 @@ class VHSRFDecodeGPU(VHSRFDecode):
             profiler.stop()
         
         del out_video_gpu, out_video05_gpu, env_gpu
-        
-        out_video05 = np.roll(out_video05, -self.Filters["F05_offset"])
         
         # Chroma processing (GPU-accelerated)
         if profiler:
@@ -1084,7 +1098,7 @@ class VHSRFDecodeGPU(VHSRFDecode):
             
             out_chroma_gpu = demod_chroma_filt_gpu(
                 chroma_source_gpu,
-                self.Filters_gpu["FVideoBurst_freq"],  # Frequency-domain FIR
+                FChromaBurstF,
                 self.blocklen,
                 notch_gpu=notch_filter_gpu,  # Frequency-domain notch filter (or None)
                 do_notch=self._notch,

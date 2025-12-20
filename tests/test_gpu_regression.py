@@ -10,6 +10,18 @@ import numpy as np
 from pathlib import Path
 
 from vhsdecode.gpu_utils import GPU_AVAILABLE
+from vhsdecode.cuda_kernels.fused_fm_demod import unwrap_hilbert_gpu_fused, is_fused_kernel_available
+
+if GPU_AVAILABLE:
+    try:
+        import cupy as cp
+        FUSED_KERNEL_AVAILABLE = bool(is_fused_kernel_available())
+    except Exception:
+        cp = None
+        FUSED_KERNEL_AVAILABLE = False
+else:
+    cp = None
+    FUSED_KERNEL_AVAILABLE = False
 
 # Skip all GPU tests if GPU is not available
 pytestmark = pytest.mark.skipif(not GPU_AVAILABLE, reason="GPU not available")
@@ -202,6 +214,34 @@ def compute_delta_e(output1, output2):
     This is a placeholder that will be implemented.
     """
     raise NotImplementedError("Delta E computation not yet implemented")
+
+
+@pytest.mark.gpu
+class TestFusedFMRegression:
+    """Regression checks for fused FM demodulation kernel."""
+
+    @pytest.mark.skipif(not FUSED_KERNEL_AVAILABLE, reason="Fused FM kernel not available")
+    def test_fused_fm_matches_reference(self):
+        """Fused kernel should match reference CuPy operations and wrapping."""
+        freq_hz = 40_000_000.0
+        angles = cp.asarray([
+            0.0,
+            0.5 * cp.pi,
+            cp.pi,
+            -0.75 * cp.pi,
+            -0.5 * cp.pi,
+            -0.25 * cp.pi,
+        ], dtype=cp.float64)
+
+        hilbert = cp.exp(1j * angles)
+
+        fused = unwrap_hilbert_gpu_fused(hilbert, freq_hz)
+
+        phase_diff = cp.angle(hilbert[1:] * cp.conj(hilbert[:-1]))
+        phase_diff = cp.where(phase_diff < 0, phase_diff + 2.0 * cp.pi, phase_diff)
+        expected = cp.concatenate([cp.zeros(1, dtype=cp.float64), phase_diff]) * (freq_hz / (2.0 * cp.pi))
+
+        np.testing.assert_allclose(cp.asnumpy(fused), cp.asnumpy(expected), rtol=1e-12, atol=1e-12)
 
 
 if __name__ == "__main__":

@@ -2,6 +2,7 @@
 
 from collections import namedtuple
 import json
+from queue import Empty
 import math
 import os
 import subprocess
@@ -1283,19 +1284,37 @@ def init_opencl(cl, name = None):
 
 # Write the .tbc.json file (used by lddecode and notebooks)
 def write_json(ldd, jsondict, outname):
+    # Use UTF-8 and buffered writes to avoid cp1252 overhead and reduce syscall cost
+    indent = 4 if ldd.verboseVITS else None
+    separators = (",", ":") if not ldd.verboseVITS else None
 
-    fp = open(outname + ".tbc.json.tmp", "w")
-    json.dump(
-        jsondict,
-        fp,
-        allow_nan=False,
-        indent=4 if ldd.verboseVITS else None,
-        separators=(",", ":") if not ldd.verboseVITS else None,
-    )
-    fp.write("\n")
-    fp.close()
+    tmp_path = outname + ".tbc.json.tmp"
+    with open(tmp_path, "w", encoding="utf-8", buffering=1024 * 1024) as fp:
+        # Prefer orjson if available for speed; fall back to stdlib json
+        try:
+            import orjson
 
-    os.replace(outname + ".tbc.json.tmp", outname + ".tbc.json")
+            fp.write(
+                orjson.dumps(
+                    jsondict,
+                    option=orjson.OPT_NON_STR_KEYS
+                    | orjson.OPT_SERIALIZE_NUMPY
+                    | (orjson.OPT_INDENT_2 if indent else 0),
+                ).decode("utf-8")
+            )
+            fp.write("\n")
+        except Exception:
+            json.dump(
+                jsondict,
+                fp,
+                allow_nan=False,
+                indent=indent,
+                separators=separators,
+                ensure_ascii=False,
+            )
+            fp.write("\n")
+
+    os.replace(tmp_path, outname + ".tbc.json")
 
 
 def jsondump_thread(ldd, outname):
@@ -1308,15 +1327,47 @@ def jsondump_thread(ldd, outname):
     """
 
     def consume(q):
+        """Consume JSON updates, coalescing multiple requests before writing.
+
+        This reduces CPU time spent serializing/writing by only emitting the
+        latest JSON payload when multiple updates are queued.
+        """
+
         while True:
             jsondict = q.get()
+            processed = 1  # track how many items we must task_done()
+
             if jsondict is None:
                 q.task_done()
                 return
 
-            write_json(ldd, jsondict, outname)
+            latest = jsondict
+            stop = False
 
+            # Drain any queued items without blocking; keep only the newest
+            while True:
+                try:
+                    nxt = q.get_nowait()
+                    processed += 1
+                except Empty:
+                    break
+
+                if nxt is None:
+                    stop = True
+                else:
+                    latest = nxt
+                q.task_done()
+
+                if stop:
+                    break
+
+            write_json(ldd, latest, outname)
+
+            # Mark the original item done (drained items already task_done'd)
             q.task_done()
+
+            if stop:
+                return
 
     q = JoinableQueue()
 

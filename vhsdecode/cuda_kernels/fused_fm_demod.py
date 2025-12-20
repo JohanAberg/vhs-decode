@@ -5,7 +5,7 @@ This module provides a highly optimized CUDA kernel that fuses multiple
 FM demodulation operations into a single kernel launch, eliminating kernel
 launch overhead and improving memory bandwidth utilization.
 
-Performance improvement: Reduces FM demod from 20.9% → 4.3% of decode time.
+Performance improvement: Reduces FM demod from 20.9% -> 4.3% of decode time.
 
 Operations fused:
 1. Complex conjugate multiplication
@@ -31,9 +31,10 @@ void fused_fm_demod(
     const double2* hilbert,  // Complex input (Hilbert transform)
     double* output,          // Real output (frequencies in Hz)
     int n,                   // Array length
-    double freq_scale        // Frequency scaling factor (freq_hz / 2π)
+    double freq_scale        // Frequency scaling factor (freq_hz / 2pi)
 ) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    const double two_pi = 6.28318530717958647692;  // Avoid dependency on M_PI macro
     
     // Handle all elements except first (which stays 0)
     if (idx > 0 && idx < n) {
@@ -50,9 +51,9 @@ void fused_fm_demod(
         // Compute angle using atan2
         double angle = atan2(imag_part, real_part);
         
-        // Wrap negative angles to [0, 2π]
+        // Wrap negative angles to [0, 2pi]
         if (angle < 0.0) {
-            angle += 2.0 * M_PI;
+            angle += two_pi;
         }
         
         // Scale to Hz and store
