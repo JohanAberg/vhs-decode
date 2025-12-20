@@ -1,3 +1,4 @@
+#define NOMINMAX
 #include "vhsdecode/rf_reader.hpp"
 #include <fstream>
 #include <stdexcept>

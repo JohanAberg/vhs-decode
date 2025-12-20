@@ -9,17 +9,22 @@ set(SOURCES
     rf/hilbert.cpp
     rf/rf_processor.cpp
     demod/fm_demodulator.cpp
-    video/chroma_separator.cpp
     video/dropout_corrector.cpp
     video/tbc_corrector.cpp
-    video/video_processor.cpp
     core/block_processor.cpp
     core/main.cpp
 )
 
-# Add FFTW3 sources if available
+# Add FFTW3-dependent sources if available
+# Note: chroma_separator and video_processor are incomplete stubs
+# The main decoder (fft_engine.cpp) already uses FFTW3 when available
 if(USE_FFTW3 AND FFTW3_FOUND)
-    list(APPEND SOURCES rf/fftw_engine.cpp)
+    # Uncomment when these files are ready:
+    # list(APPEND SOURCES 
+    #     rf/fftw_engine.cpp
+    #     video/chroma_separator.cpp
+    #     video/video_processor.cpp
+    # )
 endif()
 
 # Create executable
@@ -33,7 +38,7 @@ target_link_libraries(vhs-decode-cpp
 
 # Link FFTW3 if available
 if(USE_FFTW3 AND FFTW3_FOUND)
-    target_link_libraries(vhs-decode-cpp PRIVATE FFTW3::fftw3)
+    target_link_libraries(vhs-decode-cpp PRIVATE ${FFTW3_LIBRARIES})
 endif()
 
 # Set properties

@@ -1,6 +1,8 @@
 #include "vhsdecode/tbc_writer.hpp"
 #include <stdexcept>
 #include <sstream>
+#include <iomanip>
+#include <iomanip>
 
 namespace vhsdecode {
 namespace io {
@@ -97,40 +99,102 @@ void TBCWriter::close() {
     }
 }
 
+void TBCWriter::setVideoParameters(const VideoParameters& params) {
+    videoParams_ = params;
+}
+
+void TBCWriter::setPcmAudioParameters(const PcmAudioParameters& params) {
+    audioParams_ = params;
+}
+
+std::string TBCWriter::escapeJson(const std::string& str) const {
+    std::string result;
+    result.reserve(str.size());
+    for (char c : str) {
+        switch (c) {
+            case '\\': result += "\\\\"; break;
+            case '"': result += "\\\""; break;
+            case '\n': result += "\\n"; break;
+            case '\r': result += "\\r"; break;
+            case '\t': result += "\\t"; break;
+            default: result += c;
+        }
+    }
+    return result;
+}
+
 void TBCWriter::writeMetadataFile() {
     std::string metadataPath = basePath_ + ".tbc.json";
-    std::ofstream metadataFile(metadataPath);
+    std::ofstream json(metadataPath);
     
-    if (!metadataFile) {
-        // Don't throw, just warn
-        return;
+    if (!json) {
+        return; // Silently fail for metadata
     }
     
-    // Write simple JSON metadata
-    // For now, just write basic structure
-    // TODO: Use nlohmann/json library for proper JSON generation
-    metadataFile << "{\n";
-    metadataFile << "  \"fields\": [\n";
+    json << std::fixed << std::setprecision(1);
     
+    // Start JSON object
+    json << "{";
+    
+    // PCM Audio Parameters
+    json << "\"pcmAudioParameters\":{";
+    json << "\"bits\":" << audioParams_.bits << ",";
+    json << "\"isLittleEndian\":" << (audioParams_.isLittleEndian ? "true" : "false") << ",";
+    json << "\"isSigned\":" << (audioParams_.isSigned ? "true" : "false") << ",";
+    json << "\"sampleRate\":" << audioParams_.sampleRate;
+    json << "},";
+    
+    // Video Parameters
+    json << "\"videoParameters\":{";
+    json << "\"numberOfSequentialFields\":" << videoParams_.numberOfSequentialFields << ",";
+    json << "\"osInfo\":\"" << escapeJson(videoParams_.osInfo) << "\",";
+    json << "\"gitBranch\":\"" << escapeJson(videoParams_.gitBranch) << "\",";
+    json << "\"gitCommit\":\"" << escapeJson(videoParams_.gitCommit) << "\",";
+    json << "\"system\":\"" << escapeJson(videoParams_.system) << "\",";
+    json << "\"fieldWidth\":" << videoParams_.fieldWidth << ",";
+    json << "\"sampleRate\":" << std::setprecision(1) << videoParams_.sampleRate << ",";
+    json << "\"black16bIre\":" << std::setprecision(1) << videoParams_.black16bIre << ",";
+    json << "\"white16bIre\":" << std::setprecision(6) << videoParams_.white16bIre << ",";
+    json << "\"fieldHeight\":" << videoParams_.fieldHeight << ",";
+    json << "\"colourBurstStart\":" << videoParams_.colourBurstStart << ",";
+    json << "\"colourBurstEnd\":" << videoParams_.colourBurstEnd << ",";
+    json << "\"activeVideoStart\":" << videoParams_.activeVideoStart << ",";
+    json << "\"activeVideoEnd\":" << videoParams_.activeVideoEnd << ",";
+    json << "\"tapeFormat\":\"" << escapeJson(videoParams_.tapeFormat) << "\"";
+    json << "},";
+    
+    // Fields Array
+    json << "\"fields\":[";
     for (size_t i = 0; i < metadataEntries_.size(); ++i) {
         const auto& entry = metadataEntries_[i];
-        metadataFile << "    {\n";
-        metadataFile << "      \"fieldNumber\": " << entry.fieldNumber << ",\n";
-        metadataFile << "      \"isFirstField\": " << (entry.metadata.isFirstField ? "true" : "false") << ",\n";
-        metadataFile << "      \"lineCount\": " << entry.metadata.lineCount << ",\n";
-        metadataFile << "      \"dropouts\": " << entry.metadata.dropoutCount << "\n";
-        metadataFile << "    }";
-        if (i < metadataEntries_.size() - 1) {
-            metadataFile << ",";
+        const auto& meta = entry.metadata;
+        
+        if (i > 0) json << ",";
+        
+        json << "{";
+        json << "\"isFirstField\":" << (meta.isFirstField ? "true" : "false") << ",";
+        json << "\"syncConf\":" << meta.syncConf << ",";
+        json << "\"seqNo\":" << meta.seqNo << ",";
+        json << "\"diskLoc\":" << std::setprecision(1) << meta.diskLoc << ",";
+        json << "\"fileLoc\":" << meta.fileLoc << ",";
+        json << "\"fieldPhaseID\":" << meta.fieldPhaseID << ",";
+        json << "\"decodeFaults\":" << meta.decodeFaults;
+        
+        // Add VITS metrics if available
+        if (meta.vitsMetricsBPSNR > 0.0) {
+            json << ",\"vitsMetrics\":{";
+            json << "\"bPSNR\":" << std::setprecision(1) << meta.vitsMetricsBPSNR;
+            json << "}";
         }
-        metadataFile << "\n";
+        
+        json << "}";
     }
+    json << "]";
     
-    metadataFile << "  ],\n";
-    metadataFile << "  \"totalFields\": " << fieldsWritten_ << "\n";
-    metadataFile << "}\n";
+    // End JSON object
+    json << "}";
     
-    metadataFile.close();
+    json.close();
 }
 
 } // namespace io

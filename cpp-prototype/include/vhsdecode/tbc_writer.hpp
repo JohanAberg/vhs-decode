@@ -71,6 +71,16 @@ public:
     void addFieldMetadata(size_t fieldNum, const FieldMetadata& metadata);
     
     /**
+     * @brief Set video parameters for metadata
+     */
+    void setVideoParameters(const VideoParameters& params);
+    
+    /**
+     * @brief Set PCM audio parameters for metadata
+     */
+    void setPcmAudioParameters(const PcmAudioParameters& params);
+    
+    /**
      * @brief Get number of fields written
      */
     size_t getFieldsWritten() const { return fieldsWritten_; }
@@ -86,23 +96,23 @@ public:
     void close();
 
 private:
-    std::string basePath_;
-    bool writeChroma_;
-    bool writeMetadata_;
+    void writeMetadataFile();
+    std::string escapeJson(const std::string& str) const;
     
-    std::ofstream videoFile_;
-    std::ofstream chromaFile_;
-    
-    size_t fieldsWritten_;
-    
-    // Metadata storage (simple for now)
     struct MetadataEntry {
         size_t fieldNumber;
         FieldMetadata metadata;
     };
-    std::vector<MetadataEntry> metadataEntries_;
     
-    void writeMetadataFile();
+    std::string basePath_;
+    std::ofstream videoFile_;
+    std::ofstream chromaFile_;
+    bool writeChroma_;
+    bool writeMetadata_;
+    size_t fieldsWritten_;
+    std::vector<MetadataEntry> metadataEntries_;
+    VideoParameters videoParams_;
+    PcmAudioParameters audioParams_;
 };
 
 } // namespace io

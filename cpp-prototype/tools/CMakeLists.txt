@@ -1,5 +1,5 @@
-# Benchmark tool
-if(USE_FFTW3 AND FFTW3_FOUND)
+# Benchmark tool (disabled - needs updating for new API)
+if(FALSE AND USE_FFTW3 AND FFTW3_FOUND)
     add_executable(benchmark-fft
         benchmark_fft.cpp
         ../src/rf/fft_engine.cpp
@@ -12,7 +12,7 @@ if(USE_FFTW3 AND FFTW3_FOUND)
     
     target_link_libraries(benchmark-fft
         PRIVATE
-            FFTW3::fftw3
+            ${FFTW3_LIBRARIES}
             Threads::Threads
     )
     

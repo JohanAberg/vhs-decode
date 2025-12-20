@@ -1,3 +1,4 @@
+#define _USE_MATH_DEFINES
 #include "vhsdecode/rf_processor.hpp"
 #include <stdexcept>
 #include <cmath>
