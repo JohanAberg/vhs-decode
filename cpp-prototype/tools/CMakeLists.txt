@@ -28,6 +28,7 @@ if(USE_FFTW3 AND FFTW3_FOUND)
     target_link_libraries(benchmark-fft
         PRIVATE
             ${FFTW3_LIBRARIES}
+            fftw3f
             Threads::Threads
     )
     
