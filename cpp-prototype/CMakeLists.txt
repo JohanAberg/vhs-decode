@@ -28,7 +28,9 @@ endif()
 
 # Options
 option(BUILD_TESTS "Build unit tests" ON)
+option(BUILD_TOOLS "Build benchmark and utility tools" ON)
 option(ENABLE_GPU "Enable OpenCL GPU acceleration" ON)
+option(USE_FFTW3 "Use FFTW3 for production FFT (highly recommended)" ON)
 
 # Module path
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
@@ -41,6 +43,18 @@ include_directories(
 # Find dependencies
 find_package(Threads REQUIRED)
 
+# FFTW3 (optional but highly recommended)
+if(USE_FFTW3)
+    find_package(FFTW3)
+    if(FFTW3_FOUND)
+        message(STATUS "FFTW3 found: ${FFTW3_VERSION}")
+        add_definitions(-DHAVE_FFTW3)
+    else()
+        message(WARNING "FFTW3 not found - using prototype FFT (much slower)")
+        set(USE_FFTW3 OFF)
+    endif()
+endif()
+
 # Subdirectories
 add_subdirectory(src)
 
@@ -49,9 +63,15 @@ if(BUILD_TESTS)
     add_subdirectory(tests)
 endif()
 
+if(BUILD_TOOLS)
+    add_subdirectory(tools)
+endif()
+
 # Print configuration
 message(STATUS "")
 message(STATUS "=== VHS-Decode C++ ===")
 message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
+message(STATUS "FFTW3 support: ${USE_FFTW3}")
 message(STATUS "GPU support: ${ENABLE_GPU}")
+message(STATUS "Build tools: ${BUILD_TOOLS}")
 message(STATUS "======================")

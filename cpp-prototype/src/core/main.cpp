@@ -14,6 +14,10 @@
 #include "formats/format_base.hpp"
 #include "formats/vhs_format.hpp"
 
+#ifdef HAVE_FFTW3
+#include "vhsdecode/fftw_engine.hpp"
+#endif
+
 using namespace vhsdecode;
 using namespace vhsdecode::formats;
 
@@ -21,11 +25,12 @@ void printUsage(const char* progName) {
     std::cout << "VHS-Decode C++ Prototype v0.1.0\n";
     std::cout << "Usage: " << progName << " [options] <input.r40> <output.tbc>\n";
     std::cout << "\nOptions:\n";
-    std::cout << "  --format <format>   Tape format (VHS, SVHS, Betamax) [default: VHS]\n";
-    std::cout << "  --system <system>   TV system (NTSC, PAL, PAL-M) [default: NTSC]\n";
-    std::cout << "  --threads <n>       Number of threads [default: 4]\n";
-    std::cout << "  --gpu               Enable GPU acceleration\n";
-    std::cout << "  --help              Show this help message\n";
+    std::cout << "  --format <format>     Tape format (VHS, SVHS, Betamax) [default: VHS]\n";
+    std::cout << "  --system <system>     TV system (NTSC, PAL, PAL-M) [default: NTSC]\n";
+    std::cout << "  --threads <n>         Number of threads [default: 4]\n";
+    std::cout << "  --gpu                 Enable GPU acceleration\n";
+    std::cout << "  --use-prototype-fft   Use prototype FFT (slower, for testing)\n";
+    std::cout << "  --help                Show this help message\n";
     std::cout << "\nExample:\n";
     std::cout << "  " << progName << " --format VHS --system NTSC input.r40 output.tbc\n";
 }
@@ -36,6 +41,7 @@ int main(int argc, char* argv[]) {
     std::string systemName = "NTSC";
     int threads = 4;
     bool useGPU = false;
+    bool usePrototypeFFT = false;
     std::string inputFile;
     std::string outputFile;
     
@@ -58,6 +64,9 @@ int main(int argc, char* argv[]) {
         }
         else if (arg == "--gpu") {
             useGPU = true;
+        }
+        else if (arg == "--use-prototype-fft") {
+            usePrototypeFFT = true;
         }
         else if (arg[0] != '-') {
             if (inputFile.empty()) {
@@ -133,42 +142,91 @@ int main(int argc, char* argv[]) {
             
             // Try creating FFT engine
             std::cout << "\nInitializing FFT engine...\n";
-            try {
-                rf::FFTEngine fftEngine(config.blockSize, false);  // CPU-only for now
-                std::cout << "✓ FFT engine initialized\n";
-                std::cout << "  Block size: " << fftEngine.getBlockSize() << " samples\n";
-                std::cout << "  Using GPU: " << (fftEngine.isUsingGPU() ? "Yes" : "No (CPU)") << "\n";
-                
-                // Test FFT with first block
-                if (reader.getFileSize() >= config.blockSize) {
-                    auto rfBlock = reader.readBlock(config.blockSize, 0);
+            
+#ifdef HAVE_FFTW3
+            // Use FFTW3 by default if available and not explicitly disabled
+            if (!usePrototypeFFT) {
+                try {
+                    rf::FFTWEngine fftwEngine(config.blockSize, false);
+                    std::cout << "✓ FFTW3 FFT engine initialized\n";
+                    std::cout << "  Block size: " << fftwEngine.getBlockSize() << " samples\n";
+                    std::cout << "  FFT bins: " << fftwEngine.getBinCount() << "\n";
+                    std::cout << "  Using GPU: " << (fftwEngine.isUsingGPU() ? "Yes" : "No (CPU)") << "\n";
                     
-                    // Convert uint8 to float
-                    RealArray rfData(rfBlock.data.size());
-                    for (size_t i = 0; i < rfBlock.data.size(); ++i) {
-                        rfData[i] = static_cast<float>(rfBlock.data[i]) / 255.0f;
+                    // Test with first block
+                    if (reader.getFileSize() >= config.blockSize) {
+                        auto rfBlock = reader.readBlock(config.blockSize, 0);
+                        
+                        // Convert uint8 to double
+                        std::vector<double> rfData(rfBlock.data.size());
+                        for (size_t i = 0; i < rfBlock.data.size(); ++i) {
+                            rfData[i] = static_cast<double>(rfBlock.data[i]) / 255.0;
+                        }
+                        
+                        std::cout << "\nTesting FFTW3...\n";
+                        auto fftResult = fftwEngine.forwardFFT(rfData);
+                        std::cout << "✓ Forward FFT completed\n";
+                        std::cout << "  FFT bins: " << fftResult.size() << "\n";
+                        
+                        auto ifftResult = fftwEngine.inverseFFT(fftResult);
+                        std::cout << "✓ Inverse FFT completed\n";
+                        std::cout << "  Reconstructed samples: " << ifftResult.size() << "\n";
+                        
+                        // Calculate reconstruction error
+                        double maxError = 0.0;
+                        for (size_t i = 0; i < std::min(rfData.size(), ifftResult.size()); ++i) {
+                            maxError = std::max(maxError, std::abs(rfData[i] - ifftResult[i]));
+                        }
+                        std::cout << "  Max reconstruction error: " << std::scientific << std::setprecision(6) << maxError << "\n";
                     }
-                    
-                    std::cout << "\nTesting FFT...\n";
-                    auto fftResult = fftEngine.forwardFFT(rfData);
-                    std::cout << "✓ Forward FFT completed\n";
-                    std::cout << "  FFT bins: " << fftResult.size() << "\n";
-                    
-                    auto ifftResult = fftEngine.inverseFFT(fftResult);
-                    std::cout << "✓ Inverse FFT completed\n";
-                    std::cout << "  Reconstructed samples: " << ifftResult.size() << "\n";
-                    
-                    // Calculate reconstruction error
-                    float maxError = 0.0f;
-                    for (size_t i = 0; i < std::min(rfData.size(), ifftResult.size()); ++i) {
-                        maxError = std::max(maxError, std::abs(rfData[i] - ifftResult[i]));
-                    }
-                    std::cout << "  Max reconstruction error: " << std::fixed << std::setprecision(6) << maxError << "\n";
+                } catch (const std::exception& e) {
+                    std::cout << "FFTW3 engine initialization failed: " << e.what() << "\n";
+                    usePrototypeFFT = true;  // Fall back to prototype
                 }
-                
-            } catch (const std::exception& e) {
-                std::cout << "FFT engine initialization failed: " << e.what() << "\n";
-                std::cout << "(This is expected - using simple prototype FFT)\n";
+            }
+#else
+            usePrototypeFFT = true;  // No FFTW3 available
+#endif
+            
+            // Use prototype FFT if requested or if FFTW3 failed
+            if (usePrototypeFFT) {
+                try {
+                    rf::FFTEngine fftEngine(config.blockSize, false);  // CPU-only for now
+                    std::cout << "✓ Prototype FFT engine initialized\n";
+                    std::cout << "  Block size: " << fftEngine.getBlockSize() << " samples\n";
+                    std::cout << "  Using GPU: " << (fftEngine.isUsingGPU() ? "Yes" : "No (CPU)") << "\n";
+                    std::cout << "  Note: This is the slow prototype FFT. Install FFTW3 for 1000x speedup!\n";
+                    
+                    // Test FFT with first block
+                    if (reader.getFileSize() >= config.blockSize) {
+                        auto rfBlock = reader.readBlock(config.blockSize, 0);
+                        
+                        // Convert uint8 to float
+                        RealArray rfData(rfBlock.data.size());
+                        for (size_t i = 0; i < rfBlock.data.size(); ++i) {
+                            rfData[i] = static_cast<float>(rfBlock.data[i]) / 255.0f;
+                        }
+                        
+                        std::cout << "\nTesting FFT...\n";
+                        auto fftResult = fftEngine.forwardFFT(rfData);
+                        std::cout << "✓ Forward FFT completed\n";
+                        std::cout << "  FFT bins: " << fftResult.size() << "\n";
+                        
+                        auto ifftResult = fftEngine.inverseFFT(fftResult);
+                        std::cout << "✓ Inverse FFT completed\n";
+                        std::cout << "  Reconstructed samples: " << ifftResult.size() << "\n";
+                        
+                        // Calculate reconstruction error
+                        float maxError = 0.0f;
+                        for (size_t i = 0; i < std::min(rfData.size(), ifftResult.size()); ++i) {
+                            maxError = std::max(maxError, std::abs(rfData[i] - ifftResult[i]));
+                        }
+                        std::cout << "  Max reconstruction error: " << std::fixed << std::setprecision(6) << maxError << "\n";
+                    }
+                    
+                } catch (const std::exception& e) {
+                    std::cout << "FFT engine initialization failed: " << e.what() << "\n";
+                }
             }
             
             // Try creating FM demodulator

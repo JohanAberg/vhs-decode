@@ -12,6 +12,11 @@ set(SOURCES
     core/main.cpp
 )
 
+# Add FFTW3 sources if available
+if(USE_FFTW3 AND FFTW3_FOUND)
+    list(APPEND SOURCES rf/fftw_engine.cpp)
+endif()
+
 # Create executable
 add_executable(vhs-decode-cpp ${SOURCES})
 
@@ -20,6 +25,11 @@ target_link_libraries(vhs-decode-cpp
     PRIVATE
         Threads::Threads
 )
+
+# Link FFTW3 if available
+if(USE_FFTW3 AND FFTW3_FOUND)
+    target_link_libraries(vhs-decode-cpp PRIVATE FFTW3::fftw3)
+endif()
 
 # Set properties
 set_target_properties(vhs-decode-cpp PROPERTIES
