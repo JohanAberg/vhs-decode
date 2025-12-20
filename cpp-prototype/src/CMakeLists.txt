@@ -32,6 +32,10 @@ if(ENABLE_GPU AND OpenCL_FOUND)
     list(APPEND SOURCES 
         gpu/opencl_context.cpp
         gpu/opencl_buffer.cpp
+        gpu/kernel_loader.cpp
+        gpu/phase_unwrap_kernel.cpp
+        gpu/envelope_kernel.cpp
+        gpu/filter_kernel.cpp
     )
 endif()
 

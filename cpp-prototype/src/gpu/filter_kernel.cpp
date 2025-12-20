@@ -107,19 +107,33 @@ __kernel void normalize_complex_data(
 }
 )";
 
-FilterKernel::FilterKernel(OpenCLContext& ctx) {
-    // Load and compile kernels
-    cl::Program program = KernelLoader::loadFromSource(ctx, filterKernelSource);
+FilterKernel::FilterKernel(OpenCLContext& ctx) 
+    : ctx_(ctx), bufferSize_(0) {
+    loadKernels();
+}
+
+void FilterKernel::loadKernels() {
+    program_ = KernelLoader::loadFromSource(ctx_, filterKernelSource);
     
-    // Create kernels
-    // Note: We don't store the kernels as members in the header provided, 
-    // but we should probably cache them or the program.
-    // The header provided in context doesn't have private members for kernels!
-    // Let's check the header again.
-    // Ah, the header provided in context DOES NOT have private members for kernels.
-    // This is a problem. I should probably add them to the header or just create them on the fly (slow).
-    // Or maybe I missed them in the read_file output?
-    // Let's check the read_file output for FilterKernel again.
+    try {
+        applyFilterKernel_ = cl::Kernel(program_, "apply_filter_freq_domain");
+        applyComplexFilterKernel_ = cl::Kernel(program_, "apply_complex_filter_freq_domain");
+        applyMultipleFiltersKernel_ = cl::Kernel(program_, "apply_multiple_filters");
+        applyBandpassKernel_ = cl::Kernel(program_, "apply_bandpass_filter");
+        normalizeKernel_ = cl::Kernel(program_, "normalize_data");
+        normalizeComplexKernel_ = cl::Kernel(program_, "normalize_complex_data");
+    } catch (const cl::Error& e) {
+        throw std::runtime_error(std::string("Failed to create filter kernels: ") + e.what());
+    }
+}
+
+void FilterKernel::allocateBuffers(size_t size) {
+    if (size <= bufferSize_) return;
+    
+    tempFFTBuffer_ = ctx_.createBuffer(size * sizeof(std::complex<double>), CL_MEM_READ_WRITE);
+    tempFilterBuffer_ = ctx_.createBuffer(size * sizeof(double), CL_MEM_READ_ONLY);
+    
+    bufferSize_ = size;
 }
 
 std::vector<std::complex<double>> FilterKernel::applyFilter(
