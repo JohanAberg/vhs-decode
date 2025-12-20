@@ -131,19 +131,42 @@ Release\vhs-decode.exe --help
 
 ## Usage
 
+### Basic Command Syntax
+
+```bash
+vhs-decode [options] <input-file> <output-file>
+```
+
+### Examples
+
+**Linux/macOS:**
 ```bash
 # Basic VHS NTSC decode
-./vhs-decode --format VHS --system NTSC input.r40 output.tbc
+./vhs-decode --format VHS --system NTSC input.r40 output
 
 # VHS PAL decode with GPU
-./vhs-decode --format VHS --system PAL --gpu input.r40 output.tbc
+./vhs-decode --format VHS --system PAL --gpu input.r40 output
 
 # Multi-threaded decode
-./vhs-decode --format VHS --system NTSC --threads 8 input.r40 output.tbc
+./vhs-decode --format VHS --system NTSC --threads 8 input.r40 output
 
 # Use prototype FFT (for testing - much slower!)
-./vhs-decode --format VHS --system NTSC --use-prototype-fft input.r40 output.tbc
+./vhs-decode --format VHS --system NTSC --use-prototype-fft input.r40 output
 ```
+
+**Windows (PowerShell/CMD):**
+```powershell
+# Basic VHS NTSC decode
+.\build\src\Release\vhs-decode.exe --format VHS --system NTSC input.r40 output
+
+# VHS PAL decode with GPU
+.\build\src\Release\vhs-decode.exe --format VHS --system PAL --gpu input.r40 output
+
+# Multi-threaded decode  
+.\build\src\Release\vhs-decode.exe --format VHS --system NTSC --threads 8 input.r40 output
+```
+
+**Note:** On Windows, use backslashes for paths and ensure there are no quotes around multi-word option values. The `.tbc`, `_chroma.tbc`, and `.tbc.json` extensions are added automatically to the output filename.
 
 ### Performance
 
