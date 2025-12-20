@@ -359,7 +359,9 @@ int main(int argc, char* argv[]) {
             
             // Process blocks and assemble fields
             std::vector<uint16_t> videoBuffer;
+            std::vector<uint16_t> chromaBuffer;
             videoBuffer.reserve(samplesPerField * 2);
+            chromaBuffer.reserve(samplesPerField * 2);
             size_t fieldCount = 0;
             size_t totalSamplesProcessed = 0;
             size_t lastProgressPercent = 0;
@@ -378,7 +380,7 @@ int main(int argc, char* argv[]) {
                 // FM demodulate (reuse existing object)
                 auto fmResult = fmDemod.demodulate(rfResult.analyticSignal);
                 
-                // Convert to 16-bit and add to buffer
+                // Convert video to 16-bit and add to buffer
                 for (size_t i = 0; i < fmResult.video.size(); ++i) {
                     // Scale float video to 16-bit range (0-65535)
                     // Assuming video is normalized around 0, scale to IRE levels
@@ -387,14 +389,22 @@ int main(int argc, char* argv[]) {
                     videoBuffer.push_back(static_cast<uint16_t>(scaled));
                 }
                 
+                // Convert chroma to 16-bit and add to buffer
+                for (size_t i = 0; i < fmResult.chroma.size(); ++i) {
+                    // Scale float chroma to 16-bit range (0-65535)
+                    float scaled = (fmResult.chroma[i] + 1.0f) * 32767.5f;
+                    scaled = std::max(0.0f, std::min(65535.0f, scaled));
+                    chromaBuffer.push_back(static_cast<uint16_t>(scaled));
+                }
+                
                 totalSamplesProcessed += fmResult.video.size();
                 
                 // Check if we have enough samples for a field
-                while (videoBuffer.size() >= samplesPerField) {
+                while (videoBuffer.size() >= samplesPerField && chromaBuffer.size() >= samplesPerField) {
                     // Calculate how many samples we actually need
                     size_t samplesNeeded = samplesPerLine * config.system.fieldLines[fieldCount % 2];
                     
-                    // Extract one field worth of data
+                    // Extract one field worth of video data
                     VideoField field;
                     size_t sampleIdx = 0;
                     
@@ -406,14 +416,28 @@ int main(int argc, char* argv[]) {
                         field.push_back(videoLine);
                     }
                     
+                    // Extract one field worth of chroma data
+                    VideoField chromaField;
+                    size_t chromaIdx = 0;
+                    
+                    for (size_t line = 0; line < config.system.fieldLines[fieldCount % 2]; ++line) {
+                        VideoLine chromaLine(samplesPerLine);
+                        for (size_t s = 0; s < samplesPerLine && chromaIdx < chromaBuffer.size(); ++s) {
+                            chromaLine[s] = chromaBuffer[chromaIdx++];
+                        }
+                        chromaField.push_back(chromaLine);
+                    }
+                    
                     // Safety check: if we didn't consume enough samples, break to avoid infinite loop
-                    if (sampleIdx < samplesNeeded) {
-                        std::cerr << "Warning: Field incomplete, got " << sampleIdx << " samples, needed " << samplesNeeded << "\n";
+                    if (sampleIdx < samplesNeeded || chromaIdx < samplesNeeded) {
+                        std::cerr << "Warning: Field incomplete, got " << sampleIdx << " video and " 
+                                  << chromaIdx << " chroma samples, needed " << samplesNeeded << "\n";
                         break;
                     }
                     
-                    // Write field to TBC
+                    // Write video and chroma fields to TBC
                     writer.writeVideoField(field, fieldCount);
+                    writer.writeChromaField(chromaField, fieldCount);
                     
                     // Add field metadata
                     FieldMetadata fieldMeta;
@@ -430,9 +454,11 @@ int main(int argc, char* argv[]) {
                     
                     fieldCount++;
                     
-                    // Remove processed samples from buffer (use actual samplesNeeded, not sampleIdx)
+                    // Remove processed samples from buffers
                     size_t samplesToRemove = std::min(samplesNeeded, videoBuffer.size());
                     videoBuffer.erase(videoBuffer.begin(), videoBuffer.begin() + samplesToRemove);
+                    samplesToRemove = std::min(samplesNeeded, chromaBuffer.size());
+                    chromaBuffer.erase(chromaBuffer.begin(), chromaBuffer.begin() + samplesToRemove);
                 }
                 
                 // Progress indicator
