@@ -10,6 +10,13 @@ priority: high
 
 When working on GPU acceleration for VHS-Decode, follow these critical guidelines to ensure correctness, performance, and maintainability.
 
+**Current state (Dec 2025):** GPU Phase 2 is active and validated on RTX hardware with an end-to-end speedup of ~34% versus the CPU baseline (2.49 FPS GPU vs 2.19 FPS CPU on RTX 4070 Ti). Always keep CPU fallback intact and document any regressions.
+
+**Standard smoke test:**
+- Activate venv: `.\.venv\Scripts\Activate.ps1`
+- Quick GPU decode: `python decode.py vhs --system PAL --gpu --length 11 sample_data/out2.u8 test`
+- After code changes: `pip install -e . --no-deps` to avoid stale bytecode during validation.
+
 ## Core Principles
 
 ### 1. **Test-First Development**
@@ -178,7 +185,7 @@ def test_precision():
     """Verify FP32 doesn't degrade output quality"""
     fp64_output = decode_with_precision(data, dtype=np.float64)
     fp32_output = decode_with_precision(data, dtype=np.float32)
-    
+
     # Check SNR difference
     snr_diff = compute_snr(fp64_output) - compute_snr(fp32_output)
     assert abs(snr_diff) < 0.5, "FP32 degrades SNR"
@@ -198,10 +205,10 @@ def process_block_gpu(data):
     try:
         # Allocate on GPU
         gpu_data = cp.asarray(data)
-        
+
         # Process
         result = process(gpu_data)
-        
+
         # Transfer back
         return cp.asnumpy(result)
     finally:
@@ -222,7 +229,7 @@ def decode_block(data, use_gpu=True):
         except (cp.cuda.memory.OutOfMemoryError, GPUError) as e:
             logger.warning(f"GPU failed: {e}, falling back to CPU")
             use_gpu = False
-    
+
     return decode_block_cpu(data)
 ```
 
@@ -241,23 +248,23 @@ def decode_block(data, use_gpu=True):
 def demodblock_gpu(self, data):
     """
     GPU-accelerated RF demodulation block.
-    
+
     CPU Equivalent: demodblock() in process.py
     Expected Speedup: 3-4x (Phase 1), 5-7x (Phase 2)
     Memory Required: ~2-4 MB VRAM per block
     Precision: FP32 for FFT, FP64 for phase unwrapping
-    
+
     Tests:
         - test_gpu_unit.py::test_demodblock_matches_cpu
         - test_gpu_integration.py::test_full_decode
         - test_gpu_benchmark.py::test_demodblock_speedup
-    
+
     Args:
         data: Input RF data block (np.ndarray or cp.ndarray)
-    
+
     Returns:
         dict: Demodulated video and chroma data
-        
+
     Raises:
         GPUError: If GPU processing fails, falls back to CPU
     """
@@ -304,7 +311,7 @@ pytest tests/test_gpu_benchmark.py -v    # Performance validation
    start = time.time()
    gpu_data = cp.asarray(cpu_data)
    transfer_time = time.time() - start
-   
+
    # If transfer > compute, batch more operations on GPU
    ```
 

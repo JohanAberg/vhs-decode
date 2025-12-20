@@ -4,14 +4,22 @@ This guide explains how to set up and use GPU acceleration for VHS-Decode.
 
 ## Overview
 
-GPU acceleration can dramatically speed up the decoding process, achieving **4-12x faster processing times** compared to CPU-only decoding. Our implementation has been validated on NVIDIA RTX hardware with proven performance improvements:
+GPU acceleration offloads FFT, filtering, and demodulation to CUDA cores while maintaining CPU parity. The current Phase 2 implementation is validated on RTX hardware with a **34% end-to-end speedup** versus the CPU baseline (2.49 FPS GPU vs 2.19 FPS CPU on an RTX 4070 Ti). Output quality matches CPU and the pipeline automatically falls back to CPU if GPU resources are unavailable or exhausted.
 
-- **FFT Operations**: 6-12x speedup
-- **Complex Processing**: 5-6x speedup  
-- **End-to-End Pipeline**: 4x speedup
-- **Memory Efficient**: Automatic cleanup and fallbacks
+### Quick Start (Windows / venv)
 
-GPU acceleration offloads computationally intensive operations (FFT, filtering, demodulation) to CUDA cores while maintaining identical output quality to CPU processing.
+1. Activate the project virtual environment:
+   ```powershell
+   .\.venv\Scripts\Activate.ps1
+   ```
+2. Run a fast GPU smoke test (11 frames, PAL sample):
+   ```powershell
+   python decode.py vhs --system PAL --gpu --length 11 sample_data/out2.u8 test
+   ```
+3. Reinstall editable deps after code changes (avoids stale bytecode):
+   ```powershell
+   pip install -e . --no-deps
+   ```
 
 ## Requirements
 
