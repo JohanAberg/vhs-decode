@@ -2,9 +2,53 @@
 #include "vhsdecode/rf_processor.hpp"
 #include <stdexcept>
 #include <cmath>
+#include <algorithm>
 
 namespace vhsdecode {
 namespace rf {
+
+namespace {
+// Simple iterative Cooley-Tukey FFT for complex data (used for analytic signal iFFT)
+void complexFFT(std::vector<std::complex<float>>& data, bool inverse) {
+    const size_t n = data.size();
+    if (n <= 1) return;
+
+    // Bit-reversal permutation
+    for (size_t i = 1, j = 0; i < n; ++i) {
+        size_t bit = n >> 1;
+        for (; j & bit; bit >>= 1) {
+            j ^= bit;
+        }
+        j ^= bit;
+        if (i < j) {
+            std::swap(data[i], data[j]);
+        }
+    }
+
+    // Iterative Danielson-Lanczos
+    for (size_t len = 2; len <= n; len <<= 1) {
+        float angle = (inverse ? 2.0f : -2.0f) * static_cast<float>(M_PI) / static_cast<float>(len);
+        std::complex<float> wlen(std::cos(angle), std::sin(angle));
+        for (size_t i = 0; i < n; i += len) {
+            std::complex<float> w(1.0f, 0.0f);
+            for (size_t j = 0; j < len / 2; ++j) {
+                auto u = data[i + j];
+                auto v = data[i + j + len / 2] * w;
+                data[i + j] = u + v;
+                data[i + j + len / 2] = u - v;
+                w *= wlen;
+            }
+        }
+    }
+
+    if (inverse) {
+        float invN = 1.0f / static_cast<float>(n);
+        for (auto& x : data) {
+            x *= invN;
+        }
+    }
+}
+} // namespace
 
 RFProcessor::RFProcessor(const Config& config)
     : config_(config)
@@ -66,33 +110,22 @@ RFProcessor::Result RFProcessor::processBlock(const RealArray& rfData) {
     // But we want the complex analytic signal, so we need to handle this differently
     // For now, store the filtered FFT data
     
-    // Convert FFT to complex time-domain (analytic signal)
-    // This requires a complex iFFT, which our simple implementation doesn't have yet
-    // For the prototype, we'll compute it manually
-    
+    // Convert FFT to complex time-domain (analytic signal) via complex iFFT
     size_t N = config_.blockSize;
     result.analyticSignal.resize(N);
-    
-    // Reconstruct full complex spectrum for inverse FFT
+
+    // Reconstruct full complex spectrum with negative frequencies zeroed
     ComplexArray fullSpectrum(N);
     for (size_t i = 0; i <= N/2; ++i) {
         fullSpectrum[i] = fftData[i];
     }
-    // Mirror for negative frequencies (conjugate symmetry for real signals)
-    // But for Hilbert transform, we zero the negative frequencies
     for (size_t i = N/2 + 1; i < N; ++i) {
         fullSpectrum[i] = std::complex<float>(0.0f, 0.0f);
     }
-    
-    // Simple inverse DFT (TODO: use proper complex iFFT)
-    for (size_t n = 0; n < N; ++n) {
-        std::complex<float> sum(0.0f, 0.0f);
-        for (size_t k = 0; k < N; ++k) {
-            float angle = 2.0f * M_PI * k * n / N;
-            std::complex<float> twiddle(std::cos(angle), std::sin(angle));
-            sum += fullSpectrum[k] * twiddle;
-        }
-        result.analyticSignal[n] = sum / static_cast<float>(N);
+
+    complexFFT(fullSpectrum, true);
+    for (size_t i = 0; i < N; ++i) {
+        result.analyticSignal[i] = fullSpectrum[i];
     }
     
     // Step 5: Compute envelope

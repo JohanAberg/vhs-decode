@@ -9,6 +9,11 @@
 #include <fftw3.h>
 #endif
 
+#ifdef HAVE_CLFFT
+#include "vhsdecode/clfft_engine.hpp"
+#include "vhsdecode/opencl_context.hpp"
+#endif
+
 namespace vhsdecode {
 namespace rf {
 
@@ -24,6 +29,12 @@ public:
     fftwf_plan inversePlan;
     float* realBuffer;
     fftwf_complex* complexBuffer;
+
+#ifdef HAVE_CLFFT
+    // GPU path
+    gpu::OpenCLContext clContext;
+    std::unique_ptr<gpu::CLFFTEngine> clfftEngine;
+#endif
     
     Impl(size_t size, bool gpu) : blockSize(size), useGPU(gpu) {
         // Allocate aligned memory for FFTW3
@@ -54,11 +65,13 @@ public:
             fftwf_free(complexBuffer);
             throw std::runtime_error("Failed to create FFTW3 plans");
         }
-        
+
+#ifdef HAVE_CLFFT
         if (useGPU) {
-            // GPU not yet implemented with FFTW3
-            throw std::runtime_error("GPU FFT not yet implemented");
+            // Initialize GPU FFT engine; fallback is handled by caller on exception
+            clfftEngine = std::make_unique<gpu::CLFFTEngine>(clContext, blockSize, true);
         }
+#endif
     }
     
     ~Impl() {
@@ -136,6 +149,23 @@ ComplexArray FFTEngine::forwardFFT(const RealArray& input) {
         throw std::invalid_argument("Input size doesn't match block size");
     }
     
+#if defined(HAVE_CLFFT) && defined(HAVE_FFTW3)
+    // GPU path using clFFT when enabled
+    if (useGPU_ && impl_->clfftEngine) {
+        // Convert float input to double for clFFT API
+        std::vector<double> inputD(input.begin(), input.end());
+        auto gpuOut = impl_->clfftEngine->forwardFFT(inputD);
+        ComplexArray result(gpuOut.size());
+        for (size_t i = 0; i < gpuOut.size(); ++i) {
+            result[i] = std::complex<float>(
+                static_cast<float>(gpuOut[i].real()),
+                static_cast<float>(gpuOut[i].imag())
+            );
+        }
+        return result;
+    }
+#endif
+
 #ifdef HAVE_FFTW3
     // FFTW3 path (fast)
     // Copy input to FFTW buffer
@@ -181,6 +211,22 @@ RealArray FFTEngine::inverseFFT(const ComplexArray& input) {
         throw std::invalid_argument("Input size doesn't match expected FFT size");
     }
     
+#if defined(HAVE_CLFFT) && defined(HAVE_FFTW3)
+    if (useGPU_ && impl_->clfftEngine) {
+        // Convert float complex to double complex for clFFT API
+        std::vector<std::complex<double>> inputD(input.size());
+        for (size_t i = 0; i < input.size(); ++i) {
+            inputD[i] = std::complex<double>(input[i].real(), input[i].imag());
+        }
+        auto gpuOut = impl_->clfftEngine->inverseFFT(inputD);
+        RealArray result(gpuOut.size());
+        for (size_t i = 0; i < gpuOut.size(); ++i) {
+            result[i] = static_cast<float>(gpuOut[i]);
+        }
+        return result;
+    }
+#endif
+
 #ifdef HAVE_FFTW3
     // FFTW3 path (fast)
     // Copy input to FFTW buffer
@@ -229,8 +275,11 @@ void FFTEngine::applyFilter(ComplexArray& fftData, const ComplexArray& filter) {
     if (fftData.size() != filter.size()) {
         throw std::invalid_argument("FFT data and filter sizes must match");
     }
-    
-    // Element-wise multiplication in frequency domain
+
+#if defined(HAVE_CLFFT) && defined(HAVE_FFTW3)
+    // Currently apply filter on CPU even when GPU is enabled to keep behaviour consistent.
+    // TODO: move to FilterKernel once integrated.
+#endif
     for (size_t i = 0; i < fftData.size(); ++i) {
         fftData[i] *= filter[i];
     }

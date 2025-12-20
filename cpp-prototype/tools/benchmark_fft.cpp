@@ -33,29 +33,29 @@ struct BenchmarkResult {
 };
 
 // Generate test signal (sum of sinusoids)
-std::vector<double> generateTestSignal(size_t size) {
-    std::vector<double> signal(size);
-    const double pi = 3.14159265358979323846;
+std::vector<float> generateTestSignal(size_t size) {
+    std::vector<float> signal(size);
+    const float pi = 3.14159265358979323846f;
     
     for (size_t i = 0; i < size; ++i) {
-        double t = static_cast<double>(i) / size;
+        float t = static_cast<float>(i) / size;
         // Mix of frequencies
         signal[i] = 
             std::sin(2 * pi * 5 * t) +
-            0.5 * std::sin(2 * pi * 10 * t) +
-            0.25 * std::sin(2 * pi * 20 * t);
+            0.5f * std::sin(2 * pi * 10 * t) +
+            0.25f * std::sin(2 * pi * 20 * t);
     }
     
     return signal;
 }
 
 // Calculate maximum absolute error
-double calculateMaxError(const std::vector<double>& a, const std::vector<double>& b) {
-    if (a.size() != b.size()) return std::numeric_limits<double>::max();
+float calculateMaxError(const std::vector<float>& a, const std::vector<float>& b) {
+    if (a.size() != b.size()) return std::numeric_limits<float>::max();
     
-    double maxErr = 0.0;
+    float maxErr = 0.0f;
     for (size_t i = 0; i < a.size(); ++i) {
-        double err = std::abs(a[i] - b[i]);
+        float err = std::abs(a[i] - b[i]);
         maxErr = std::max(maxErr, err);
     }
     return maxErr;

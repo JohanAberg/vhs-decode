@@ -32,6 +32,10 @@ if(ENABLE_GPU AND OpenCL_FOUND)
     list(APPEND SOURCES 
         gpu/opencl_context.cpp
         gpu/opencl_buffer.cpp
+        gpu/kernel_loader.cpp
+        gpu/phase_unwrap_kernel.cpp
+        gpu/envelope_kernel.cpp
+        gpu/filter_kernel.cpp
     )
 endif()
 
@@ -52,6 +56,7 @@ target_link_libraries(vhs-decode-cpp
 # Link FFTW3 if available
 if(USE_FFTW3 AND FFTW3_FOUND)
     target_link_libraries(vhs-decode-cpp PRIVATE ${FFTW3_LIBRARIES})
+    target_link_libraries(vhs-decode-cpp PRIVATE fftw3f)  # Add float version explicitly
 endif()
 
 # Link OpenCL if available
