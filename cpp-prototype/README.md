@@ -15,6 +15,13 @@ This is a working prototype for the C++ rewrite of VHS-Decode, focusing initiall
 - ✅ FM demodulator (phase unwrap, envelope)
 - ✅ TBC writer (video, chroma, metadata)
 
+**Phase 2: RF Processing** (Complete)
+- ✅ Filter bank (bandpass, lowpass, highpass)
+- ✅ Hilbert transform (analytic signal generation)
+- ✅ RF processor pipeline orchestrator
+- ✅ Frequency-domain filtering
+- ✅ Integrated RF → FFT → Filter → Hilbert → iFFT pipeline
+
 ## Architecture
 
 The prototype uses a modular, extensible architecture:
@@ -70,7 +77,7 @@ Release\vhs-decode.exe --help
 
 ## Current Features
 
-### Implemented
+### Implemented (Phase 1 + 2)
 - ✅ Modular format system
 - ✅ VHS format support (NTSC, PAL, PAL-M)
 - ✅ System parameter calculation
@@ -82,14 +89,16 @@ Release\vhs-decode.exe --help
 - ✅ FFT engine (CPU-based Cooley-Tukey implementation)
 - ✅ FM demodulator (phase unwrapping, envelope detection)
 - ✅ TBC file writer (video, chroma, JSON metadata)
+- ✅ **Filter bank** (bandpass, lowpass, highpass filters)
+- ✅ **Hilbert transform** (analytic signal generation)
+- ✅ **RF processor** (integrated pipeline orchestrator)
 
-### TODO (Next Steps for Production)
+### TODO (Phase 3+: Next Steps)
 - ⏳ Replace prototype FFT with FFTW3 library
-- ⏳ Add clFFT for GPU acceleration
-- ⏳ Frequency-domain filtering (RF bandpass)
-- ⏳ Hilbert transform for analytic signal
+- ⏳ Add clFFT for GPU acceleration (OpenCL)
+- ⏳ Optimize phase unwrapping with custom kernels
 - ⏳ Video/chroma separation filters
-- ⏳ Dropout correction
+- ⏳ Dropout detection and correction
 - ⏳ Time-base correction
 - ⏳ Full integrated decode pipeline
 - ⏳ Multi-threaded block processing
@@ -130,7 +139,10 @@ cpp-prototype/
 │   │   ├── rf_reader.hpp       # RF file reader interface
 │   │   ├── tbc_writer.hpp      # TBC file writer interface
 │   │   ├── fft_engine.hpp      # FFT engine interface
-│   │   └── fm_demodulator.hpp  # FM demodulator interface
+│   │   ├── fm_demodulator.hpp  # FM demodulator interface
+│   │   ├── filter_bank.hpp     # Filter bank interface (Phase 2)
+│   │   ├── hilbert.hpp         # Hilbert transform (Phase 2)
+│   │   └── rf_processor.hpp    # RF processor orchestrator (Phase 2)
 │   └── formats/
 │       ├── format_base.hpp     # Abstract format interface
 │       └── vhs_format.hpp      # VHS format implementation
@@ -145,7 +157,10 @@ cpp-prototype/
 │   │   ├── rf_reader.cpp       # RF reader implementation
 │   │   └── tbc_writer.cpp      # TBC writer implementation
 │   ├── rf/
-│   │   └── fft_engine.cpp      # FFT engine implementation
+│   │   ├── fft_engine.cpp      # FFT engine implementation
+│   │   ├── filter_bank.cpp     # Filter bank implementation (Phase 2)
+│   │   ├── hilbert.cpp         # Hilbert transform (Phase 2)
+│   │   └── rf_processor.cpp    # RF processor (Phase 2)
 │   └── demod/
 │       └── fm_demodulator.cpp  # FM demodulator implementation
 ├── tests/                      # Unit tests (TODO)

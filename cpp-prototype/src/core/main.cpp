@@ -8,6 +8,9 @@
 #include "vhsdecode/tbc_writer.hpp"
 #include "vhsdecode/fft_engine.hpp"
 #include "vhsdecode/fm_demodulator.hpp"
+#include "vhsdecode/filter_bank.hpp"
+#include "vhsdecode/hilbert.hpp"
+#include "vhsdecode/rf_processor.hpp"
 #include "formats/format_base.hpp"
 #include "formats/vhs_format.hpp"
 
@@ -213,21 +216,110 @@ int main(int argc, char* argv[]) {
             std::cout << "✓ TBC files closed\n";
             
             std::cout << "\n" << std::string(60, '=') << "\n";
-            std::cout << "Status: All components working! ✓✓✓\n";
+            std::cout << "PHASE 2: RF Processing Pipeline\n";
             std::cout << std::string(60, '=') << "\n";
-            std::cout << "\nComponents implemented:\n";
+            
+            // Test Phase 2: RF Processor with filter bank and Hilbert
+            std::cout << "\nInitializing RF processor (Phase 2)...\n";
+            rf::RFProcessor::Config rfConfig;
+            rfConfig.sampleRateMHz = config.inputFreqMHz;
+            rfConfig.blockSize = config.blockSize;
+            rfConfig.rfBandpassLowMHz = 0.5;
+            rfConfig.rfBandpassHighMHz = 18.0;
+            rfConfig.useGPU = useGPU;
+            
+            rf::RFProcessor rfProcessor(rfConfig);
+            std::cout << "✓ RF processor initialized\n";
+            std::cout << "  Sample rate: " << rfConfig.sampleRateMHz << " MHz\n";
+            std::cout << "  Block size: " << rfConfig.blockSize << " samples\n";
+            std::cout << "  RF bandpass: " << rfConfig.rfBandpassLowMHz << " - " 
+                      << rfConfig.rfBandpassHighMHz << " MHz\n";
+            
+            // Test filter bank
+            std::cout << "\nTesting filter bank...\n";
+            auto& filterBank = rfProcessor.getFilterBank();
+            
+            // Create additional filters
+            filterBank.createLowpassFilter("video_lpf", 6.0);
+            filterBank.createBandpassFilter("chroma_bp", 0.4, 1.0);
+            
+            auto filterNames = filterBank.getFilterNames();
+            std::cout << "✓ Filter bank loaded\n";
+            std::cout << "  Available filters: " << filterNames.size() << "\n";
+            for (const auto& name : filterNames) {
+                std::cout << "    - " << name << "\n";
+            }
+            
+            // Test Hilbert transform
+            std::cout << "\nTesting Hilbert transform...\n";
+            rf::HilbertTransform hilbert(config.blockSize);
+            auto hilbertFilter = hilbert.getHilbertFilter();
+            std::cout << "✓ Hilbert transform initialized\n";
+            std::cout << "  Filter size: " << hilbertFilter.size() << " bins\n";
+            std::cout << "  DC multiplier: " << hilbertFilter[0].real() << "\n";
+            std::cout << "  Positive freq multiplier: " << hilbertFilter[1].real() << "\n";
+            
+            // Process a block through the full RF pipeline
+            if (reader.getFileSize() >= config.blockSize) {
+                std::cout << "\nProcessing RF block through full pipeline...\n";
+                auto rfBlock = reader.readBlock(config.blockSize, 0);
+                
+                auto rfResult = rfProcessor.processBlock(rfBlock.data);
+                
+                std::cout << "✓ RF processing complete\n";
+                std::cout << "  Analytic signal samples: " << rfResult.analyticSignal.size() << "\n";
+                std::cout << "  Envelope samples: " << rfResult.envelope.size() << "\n";
+                std::cout << "  Filtered signal samples: " << rfResult.filtered.size() << "\n";
+                
+                // Show some envelope statistics
+                float minEnv = rfResult.envelope[0];
+                float maxEnv = rfResult.envelope[0];
+                float avgEnv = 0.0f;
+                for (size_t i = 0; i < rfResult.envelope.size(); ++i) {
+                    minEnv = std::min(minEnv, rfResult.envelope[i]);
+                    maxEnv = std::max(maxEnv, rfResult.envelope[i]);
+                    avgEnv += rfResult.envelope[i];
+                }
+                avgEnv /= rfResult.envelope.size();
+                
+                std::cout << "  Envelope stats:\n";
+                std::cout << "    Min: " << std::fixed << std::setprecision(6) << minEnv << "\n";
+                std::cout << "    Max: " << maxEnv << "\n";
+                std::cout << "    Avg: " << avgEnv << "\n";
+                
+                // Test FM demodulation with the analytic signal
+                std::cout << "\nApplying FM demodulation to analytic signal...\n";
+                demod::FMDemodulator fmDemod2(config);
+                auto fmResult = fmDemod2.demodulate(rfResult.analyticSignal);
+                
+                std::cout << "✓ FM demodulation complete\n";
+                std::cout << "  Video samples: " << fmResult.video.size() << "\n";
+                std::cout << "  Chroma samples: " << fmResult.chroma.size() << "\n";
+            }
+            
+            std::cout << "\n" << std::string(60, '=') << "\n";
+            std::cout << "Status: Phase 2 RF Processing Working! ✓✓✓\n";
+            std::cout << std::string(60, '=') << "\n";
+            
+            std::cout << "\nPhase 1 Components:\n";
             std::cout << "  1. ✓ RF reader with memory-mapped I/O\n";
             std::cout << "  2. ✓ FFT engine (CPU, prototype implementation)\n";
             std::cout << "  3. ✓ FM demodulator (phase unwrap, envelope detection)\n";
             std::cout << "  4. ✓ TBC writer (video, chroma, metadata)\n";
             
-            std::cout << "\nNext steps for production:\n";
-            std::cout << "  • Replace prototype FFT with FFTW3/clFFT\n";
-            std::cout << "  • Add proper RF filtering (bandpass, Hilbert)\n";
-            std::cout << "  • Implement video/chroma separation\n";
-            std::cout << "  • Add dropout correction\n";
+            std::cout << "\nPhase 2 Components (NEW):\n";
+            std::cout << "  5. ✓ Filter bank (bandpass, lowpass, highpass)\n";
+            std::cout << "  6. ✓ Hilbert transform (analytic signal generation)\n";
+            std::cout << "  7. ✓ RF processor (integrated pipeline)\n";
+            
+            std::cout << "\nNext steps for Phase 3:\n";
+            std::cout << "  • Replace prototype FFT with FFTW3 for production\n";
+            std::cout << "  • Add GPU support with clFFT/OpenCL\n";
+            std::cout << "  • Optimize phase unwrapping with custom kernels\n";
+            std::cout << "  • Implement proper video/chroma separation\n";
+            std::cout << "  • Add dropout detection and correction\n";
             std::cout << "  • Implement time-base correction\n";
-            std::cout << "  • Connect full decoding pipeline\n";
+            std::cout << "  • Multi-threaded block processing\n";
             
         } catch (const std::exception& e) {
             std::cerr << "Error during processing: " << e.what() << "\n";

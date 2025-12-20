@@ -5,6 +5,9 @@ set(SOURCES
     io/rf_reader.cpp
     io/tbc_writer.cpp
     rf/fft_engine.cpp
+    rf/filter_bank.cpp
+    rf/hilbert.cpp
+    rf/rf_processor.cpp
     demod/fm_demodulator.cpp
     core/main.cpp
 )
