@@ -19,9 +19,19 @@ if(USE_FFTW3 AND FFTW3_FOUND)
         list(APPEND BENCHMARK_SOURCES ../src/gpu/clfft_engine.cpp)
     endif()
 
-    # Locate double-precision FFTW3 if available via vcpkg
+    # Locate double-precision FFTW3 library
+    # fftw_engine.cpp uses double-precision (fftw_*) functions
     if(NOT DEFINED FFTW3_DOUBLE_LIB)
-        if(EXISTS "C:/vcpkg/installed/x64-windows/lib/fftw3.lib")
+        # Try pkg-config on Linux
+        find_package(PkgConfig QUIET)
+        if(PKG_CONFIG_FOUND)
+            pkg_check_modules(FFTW3_DOUBLE fftw3)
+            if(FFTW3_DOUBLE_FOUND)
+                set(FFTW3_DOUBLE_LIB ${FFTW3_DOUBLE_LIBRARIES})
+            endif()
+        endif()
+        # Fallback for vcpkg on Windows
+        if(NOT FFTW3_DOUBLE_LIB AND EXISTS "C:/vcpkg/installed/x64-windows/lib/fftw3.lib")
             set(FFTW3_DOUBLE_LIB "C:/vcpkg/installed/x64-windows/lib/fftw3.lib")
         endif()
     endif()
