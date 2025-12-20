@@ -9,6 +9,11 @@ set(SOURCES
     rf/hilbert.cpp
     rf/rf_processor.cpp
     demod/fm_demodulator.cpp
+    video/chroma_separator.cpp
+    video/dropout_corrector.cpp
+    video/tbc_corrector.cpp
+    video/video_processor.cpp
+    core/block_processor.cpp
     core/main.cpp
 )
 
