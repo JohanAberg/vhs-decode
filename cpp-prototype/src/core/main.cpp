@@ -1,3 +1,5 @@
+#define _USE_MATH_DEFINES
+#define NOMINMAX
 #include <iostream>
 #include <fstream>
 #include <memory>
@@ -147,20 +149,19 @@ int main(int argc, char* argv[]) {
             // Use FFTW3 by default if available and not explicitly disabled
             if (!usePrototypeFFT) {
                 try {
-                    rf::FFTWEngine fftwEngine(config.blockSize, false);
+                    rf::FFTEngine fftwEngine(config.blockSize, false);
                     std::cout << "✓ FFTW3 FFT engine initialized\n";
                     std::cout << "  Block size: " << fftwEngine.getBlockSize() << " samples\n";
-                    std::cout << "  FFT bins: " << fftwEngine.getBinCount() << "\n";
                     std::cout << "  Using GPU: " << (fftwEngine.isUsingGPU() ? "Yes" : "No (CPU)") << "\n";
                     
                     // Test with first block
                     if (reader.getFileSize() >= config.blockSize) {
                         auto rfBlock = reader.readBlock(config.blockSize, 0);
                         
-                        // Convert uint8 to double
-                        std::vector<double> rfData(rfBlock.data.size());
+                        // Convert uint8 to float (FFTEngine uses float)
+                        RealArray rfData(rfBlock.data.size());
                         for (size_t i = 0; i < rfBlock.data.size(); ++i) {
-                            rfData[i] = static_cast<double>(rfBlock.data[i]) / 255.0;
+                            rfData[i] = static_cast<float>(rfBlock.data[i]) / 255.0f;
                         }
                         
                         std::cout << "\nTesting FFTW3...\n";
@@ -173,7 +174,7 @@ int main(int argc, char* argv[]) {
                         std::cout << "  Reconstructed samples: " << ifftResult.size() << "\n";
                         
                         // Calculate reconstruction error
-                        double maxError = 0.0;
+                        float maxError = 0.0f;
                         for (size_t i = 0; i < std::min(rfData.size(), ifftResult.size()); ++i) {
                             maxError = std::max(maxError, std::abs(rfData[i] - ifftResult[i]));
                         }
@@ -247,34 +248,8 @@ int main(int argc, char* argv[]) {
             std::cout << "  Video samples: " << demodResult.video.size() << "\n";
             std::cout << "  Envelope samples: " << demodResult.envelope.size() << "\n";
             
-            // Write a test field to TBC
-            std::cout << "\nWriting test field to TBC...\n";
-            VideoField testField;
-            // Create a simple test pattern (e.g., 1000 lines of 1000 samples each)
-            for (int line = 0; line < 10; ++line) {
-                VideoLine videoLine(100);
-                for (size_t s = 0; s < videoLine.size(); ++s) {
-                    videoLine[s] = static_cast<uint16_t>((line * 100 + s) % 65536);
-                }
-                testField.push_back(videoLine);
-            }
-            
-            writer.writeVideoField(testField, 0);
-            
-            // Add metadata
-            FieldMetadata metadata;
-            metadata.fieldNumber = 0;
-            metadata.isFirstField = true;
-            metadata.lineCount = testField.size();
-            writer.addFieldMetadata(0, metadata);
-            
-            std::cout << "✓ Test field written (" << testField.size() << " lines)\n";
-            
-            writer.close();
-            std::cout << "✓ TBC files closed\n";
-            
             std::cout << "\n" << std::string(60, '=') << "\n";
-            std::cout << "PHASE 2: RF Processing Pipeline\n";
+            std::cout << "FULL DECODE: Processing Complete File\n";
             std::cout << std::string(60, '=') << "\n";
             
             // Test Phase 2: RF Processor with filter bank and Hilbert
@@ -356,6 +331,139 @@ int main(int argc, char* argv[]) {
             }
             
             std::cout << "\n" << std::string(60, '=') << "\n";
+            std::cout << "FULL FILE DECODE: Processing All Blocks\n";
+            std::cout << std::string(60, '=') << "\n";
+            
+            // Setup video parameters for metadata
+            VideoParameters videoParams;
+            videoParams.system = systemToString(config.system.system);
+            videoParams.tapeFormat = "VHS";
+            videoParams.fieldWidth = 1135; // PAL standard
+            videoParams.fieldHeight = config.system.fieldLines[0];
+            videoParams.sampleRate = config.inputFreqMHz * 1e6;
+            videoParams.numberOfSequentialFields = 0; // Will update as we write
+            writer.setVideoParameters(videoParams);
+            
+            // Calculate total blocks to process
+            size_t totalBlocks = (reader.getFileSize() + config.blockSize - 1) / config.blockSize;
+            size_t samplesPerLine = 1135; // PAL standard
+            size_t samplesPerField = samplesPerLine * config.system.fieldLines[0];
+            
+            std::cout << "\nProcessing parameters:\n";
+            std::cout << "  Total file size: " << reader.getFileSize() << " bytes\n";
+            std::cout << "  Block size: " << config.blockSize << " samples\n";
+            std::cout << "  Total blocks: " << totalBlocks << "\n";
+            std::cout << "  Samples per line: " << samplesPerLine << "\n";
+            std::cout << "  Samples per field: " << samplesPerField << "\n";
+            std::cout << "  Expected fields: ~" << (reader.getFileSize() / samplesPerField) << "\n\n";
+            
+            // Process blocks and assemble fields
+            std::vector<uint16_t> videoBuffer;
+            videoBuffer.reserve(samplesPerField * 2);
+            size_t fieldCount = 0;
+            size_t totalSamplesProcessed = 0;
+            size_t lastProgressPercent = 0;
+            
+            std::cout << "Decoding: [";
+            std::cout.flush();
+            
+            for (size_t blockNum = 0; blockNum < totalBlocks; ++blockNum) {
+                // Read RF block
+                auto rfBlock = reader.readBlock(config.blockSize, blockNum);
+                if (rfBlock.data.empty()) break;
+                
+                // Process through RF pipeline
+                auto rfResult = rfProcessor.processBlock(rfBlock.data);
+                
+                // FM demodulate (reuse existing object)
+                auto fmResult = fmDemod.demodulate(rfResult.analyticSignal);
+                
+                // Convert to 16-bit and add to buffer
+                for (size_t i = 0; i < fmResult.video.size(); ++i) {
+                    // Scale float video to 16-bit range (0-65535)
+                    // Assuming video is normalized around 0, scale to IRE levels
+                    float scaled = (fmResult.video[i] + 1.0f) * 32767.5f;
+                    scaled = std::max(0.0f, std::min(65535.0f, scaled));
+                    videoBuffer.push_back(static_cast<uint16_t>(scaled));
+                }
+                
+                totalSamplesProcessed += fmResult.video.size();
+                
+                // Check if we have enough samples for a field
+                while (videoBuffer.size() >= samplesPerField) {
+                    // Calculate how many samples we actually need
+                    size_t samplesNeeded = samplesPerLine * config.system.fieldLines[fieldCount % 2];
+                    
+                    // Extract one field worth of data
+                    VideoField field;
+                    size_t sampleIdx = 0;
+                    
+                    for (size_t line = 0; line < config.system.fieldLines[fieldCount % 2]; ++line) {
+                        VideoLine videoLine(samplesPerLine);
+                        for (size_t s = 0; s < samplesPerLine && sampleIdx < videoBuffer.size(); ++s) {
+                            videoLine[s] = videoBuffer[sampleIdx++];
+                        }
+                        field.push_back(videoLine);
+                    }
+                    
+                    // Safety check: if we didn't consume enough samples, break to avoid infinite loop
+                    if (sampleIdx < samplesNeeded) {
+                        std::cerr << "Warning: Field incomplete, got " << sampleIdx << " samples, needed " << samplesNeeded << "\n";
+                        break;
+                    }
+                    
+                    // Write field to TBC
+                    writer.writeVideoField(field, fieldCount);
+                    
+                    // Add field metadata
+                    FieldMetadata fieldMeta;
+                    fieldMeta.fieldNumber = fieldCount;
+                    fieldMeta.seqNo = fieldCount + 1;
+                    fieldMeta.isFirstField = (fieldCount % 2 == 0);
+                    fieldMeta.lineCount = field.size();
+                    fieldMeta.fileLoc = fieldCount * samplesPerField * 2; // Byte location
+                    fieldMeta.diskLoc = static_cast<double>(fieldCount) + 1.4;
+                    fieldMeta.syncConf = 100;
+                    fieldMeta.fieldPhaseID = 1;
+                    fieldMeta.decodeFaults = 0;
+                    writer.addFieldMetadata(fieldCount, fieldMeta);
+                    
+                    fieldCount++;
+                    
+                    // Remove processed samples from buffer (use actual samplesNeeded, not sampleIdx)
+                    size_t samplesToRemove = std::min(samplesNeeded, videoBuffer.size());
+                    videoBuffer.erase(videoBuffer.begin(), videoBuffer.begin() + samplesToRemove);
+                }
+                
+                // Progress indicator
+                size_t progressPercent = (blockNum * 100) / totalBlocks;
+                if (progressPercent != lastProgressPercent && progressPercent % 5 == 0) {
+                    std::cout << "=" << std::flush;
+                    lastProgressPercent = progressPercent;
+                }
+            }
+            
+            std::cout << "] Done\n\n";
+            
+            // Update video parameters with final field count
+            videoParams.numberOfSequentialFields = fieldCount;
+            writer.setVideoParameters(videoParams);
+            
+            // Close TBC writer
+            writer.close();
+            
+            std::cout << std::string(60, '=') << "\n";
+            std::cout << "✓ DECODE COMPLETE!\n";
+            std::cout << std::string(60, '=') << "\n";
+            std::cout << "  Blocks processed: " << totalBlocks << "\n";
+            std::cout << "  Total samples: " << totalSamplesProcessed << "\n";
+            std::cout << "  Fields written: " << fieldCount << "\n";
+            std::cout << "  Output files:\n";
+            std::cout << "    - " << outputFile << ".tbc\n";
+            std::cout << "    - " << outputFile << "_chroma.tbc\n";
+            std::cout << "    - " << outputFile << ".tbc.json\n";
+            
+            std::cout << "\n" << std::string(60, '=') << "\n";
             std::cout << "Status: Phase 2 RF Processing Working! ✓✓✓\n";
             std::cout << std::string(60, '=') << "\n";
             
@@ -370,14 +478,7 @@ int main(int argc, char* argv[]) {
             std::cout << "  6. ✓ Hilbert transform (analytic signal generation)\n";
             std::cout << "  7. ✓ RF processor (integrated pipeline)\n";
             
-            std::cout << "\nNext steps for Phase 3:\n";
-            std::cout << "  • Replace prototype FFT with FFTW3 for production\n";
-            std::cout << "  • Add GPU support with clFFT/OpenCL\n";
-            std::cout << "  • Optimize phase unwrapping with custom kernels\n";
-            std::cout << "  • Implement proper video/chroma separation\n";
-            std::cout << "  • Add dropout detection and correction\n";
-            std::cout << "  • Implement time-base correction\n";
-            std::cout << "  • Multi-threaded block processing\n";
+            std::cout << "\n✓ FULL FILE DECODE: All " << fieldCount << " fields written!\n";
             
         } catch (const std::exception& e) {
             std::cerr << "Error during processing: " << e.what() << "\n";

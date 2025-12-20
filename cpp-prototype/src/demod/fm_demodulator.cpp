@@ -1,3 +1,4 @@
+#define _USE_MATH_DEFINES
 #include "vhsdecode/fm_demodulator.hpp"
 #include <cmath>
 #include <algorithm>
