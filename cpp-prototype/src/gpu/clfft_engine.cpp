@@ -110,49 +110,6 @@ CLFFTEngine::~CLFFTEngine() {
     }
 }
 
-CLFFTEngine::CLFFTEngine(CLFFTEngine&& other) noexcept
-    : ctx_(other.ctx_)
-    , blockSize_(other.blockSize_)
-    , batchSize_(other.batchSize_)
-    , useGPU_(other.useGPU_)
-    , forwardPlan_(other.forwardPlan_)
-    , inversePlan_(other.inversePlan_)
-    , tempRealBuffer_(std::move(other.tempRealBuffer_))
-    , tempComplexBuffer_(std::move(other.tempComplexBuffer_))
-    , filterKernel_(std::move(other.filterKernel_))
-    , filterProgram_(std::move(other.filterProgram_))
-{
-    other.forwardPlan_ = 0;
-    other.inversePlan_ = 0;
-}
-
-CLFFTEngine& CLFFTEngine::operator=(CLFFTEngine&& other) noexcept {
-    if (this != &other) {
-        // Cleanup existing plans
-        if (forwardPlan_ != 0) {
-            clfftDestroyPlan(&forwardPlan_);
-        }
-        if (inversePlan_ != 0) {
-            clfftDestroyPlan(&inversePlan_);
-        }
-        
-        // Move data
-        ctx_ = other.ctx_;
-        blockSize_ = other.blockSize_;
-        batchSize_ = other.batchSize_;
-        useGPU_ = other.useGPU_;
-        forwardPlan_ = other.forwardPlan_;
-        inversePlan_ = other.inversePlan_;
-        tempRealBuffer_ = std::move(other.tempRealBuffer_);
-        tempComplexBuffer_ = std::move(other.tempComplexBuffer_);
-        filterKernel_ = std::move(other.filterKernel_);
-        filterProgram_ = std::move(other.filterProgram_);
-        
-        other.forwardPlan_ = 0;
-        other.inversePlan_ = 0;
-    }
-    return *this;
-}
 
 void CLFFTEngine::createForwardPlan() {
     size_t lengths[1] = { blockSize_ };

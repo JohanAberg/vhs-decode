@@ -32,11 +32,11 @@ public:
      */
     ~CLFFTEngine();
     
-    // Delete copy, allow move
+    // Delete copy and move
     CLFFTEngine(const CLFFTEngine&) = delete;
     CLFFTEngine& operator=(const CLFFTEngine&) = delete;
-    CLFFTEngine(CLFFTEngine&&) noexcept;
-    CLFFTEngine& operator=(CLFFTEngine&&) noexcept;
+    CLFFTEngine(CLFFTEngine&&) = delete;
+    CLFFTEngine& operator=(CLFFTEngine&&) = delete;
     
     /**
      * @brief Forward FFT (CPU-compatible interface)
