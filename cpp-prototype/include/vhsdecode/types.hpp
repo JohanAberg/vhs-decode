@@ -14,6 +14,9 @@ using SampleF32 = float;
 using RealArray = std::vector<SampleF32>;
 using ComplexArray = std::vector<std::complex<SampleF32>>;
 
+using VideoLine = std::vector<uint16_t>;
+using VideoField = std::vector<VideoLine>;
+
 // TV system types
 enum class TVSystem {
     NTSC,
@@ -68,6 +71,21 @@ struct DemodBlock {
     RealArray chroma;
     RealArray envelope;
     size_t blockNumber;
+};
+
+// Field metadata
+struct FieldMetadata {
+    int fieldNumber;
+    bool isFirstField;
+    int lineCount;
+    int dropoutCount;
+    
+    FieldMetadata() 
+        : fieldNumber(0)
+        , isFirstField(true)
+        , lineCount(0)
+        , dropoutCount(0)
+    {}
 };
 
 // Processing config

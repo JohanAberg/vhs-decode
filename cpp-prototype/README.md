@@ -4,16 +4,16 @@ This is a working prototype for the C++ rewrite of VHS-Decode, focusing initiall
 
 ## Current Status
 
-**Phase 1: Foundation** (In Progress)
+**Phase 1: Foundation** (Complete)
 - ✅ Project structure created
 - ✅ CMake build system
 - ✅ Core type definitions
 - ✅ Modular format interface
 - ✅ VHS format implementation
 - ✅ RF reader with memory-mapped I/O
-- ⏳ FFT engine (TODO)
-- ⏳ FM demodulator (TODO)
-- ⏳ TBC writer (TODO)
+- ✅ FFT engine (CPU prototype)
+- ✅ FM demodulator (phase unwrap, envelope)
+- ✅ TBC writer (video, chroma, metadata)
 
 ## Architecture
 
@@ -79,17 +79,20 @@ Release\vhs-decode.exe --help
 - ✅ Format/system auto-detection from parameters
 - ✅ RF file reader with memory-mapped I/O
 - ✅ Cross-platform file handling (Linux/Windows/macOS)
+- ✅ FFT engine (CPU-based Cooley-Tukey implementation)
+- ✅ FM demodulator (phase unwrapping, envelope detection)
+- ✅ TBC file writer (video, chroma, JSON metadata)
 
-### TODO (Next Steps)
-- ⏳ FFT engine (CPU + GPU)
-- ⏳ Frequency-domain filtering
-- ⏳ Hilbert transform
-- ⏳ FM demodulation
-- ⏳ Phase unwrapping
-- ⏳ Envelope detection
-- ⏳ Chroma separation
-- ⏳ TBC file writer
-- ⏳ Metadata (JSON) writer
+### TODO (Next Steps for Production)
+- ⏳ Replace prototype FFT with FFTW3 library
+- ⏳ Add clFFT for GPU acceleration
+- ⏳ Frequency-domain filtering (RF bandpass)
+- ⏳ Hilbert transform for analytic signal
+- ⏳ Video/chroma separation filters
+- ⏳ Dropout correction
+- ⏳ Time-base correction
+- ⏳ Full integrated decode pipeline
+- ⏳ Multi-threaded block processing
 
 ## Adding New Formats
 
@@ -124,7 +127,10 @@ cpp-prototype/
 ├── include/
 │   ├── vhsdecode/
 │   │   ├── types.hpp           # Common types and structures
-│   │   └── rf_reader.hpp       # RF file reader interface
+│   │   ├── rf_reader.hpp       # RF file reader interface
+│   │   ├── tbc_writer.hpp      # TBC file writer interface
+│   │   ├── fft_engine.hpp      # FFT engine interface
+│   │   └── fm_demodulator.hpp  # FM demodulator interface
 │   └── formats/
 │       ├── format_base.hpp     # Abstract format interface
 │       └── vhs_format.hpp      # VHS format implementation
@@ -135,8 +141,13 @@ cpp-prototype/
 │   ├── formats/
 │   │   ├── format_base.cpp     # Format utilities
 │   │   └── vhs_format.cpp      # VHS implementation
-│   └── io/
-│       └── rf_reader.cpp       # RF reader implementation
+│   ├── io/
+│   │   ├── rf_reader.cpp       # RF reader implementation
+│   │   └── tbc_writer.cpp      # TBC writer implementation
+│   ├── rf/
+│   │   └── fft_engine.cpp      # FFT engine implementation
+│   └── demod/
+│       └── fm_demodulator.cpp  # FM demodulator implementation
 ├── tests/                      # Unit tests (TODO)
 └── README.md                   # This file
 ```

@@ -3,6 +3,9 @@ set(SOURCES
     formats/format_base.cpp
     formats/vhs_format.cpp
     io/rf_reader.cpp
+    io/tbc_writer.cpp
+    rf/fft_engine.cpp
+    demod/fm_demodulator.cpp
     core/main.cpp
 )
 
