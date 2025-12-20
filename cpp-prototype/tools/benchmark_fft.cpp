@@ -151,10 +151,11 @@ BenchmarkResult benchmarkBlockSize(size_t blockSize, int iterations = 10
     if (gpuCtx != nullptr) {
         try {
             vhsdecode::gpu::CLFFTEngine gpuEngine(*gpuCtx, blockSize, true);
+            std::vector<double> signalDouble = toDouble(signal);
             
             auto startGPU = std::chrono::high_resolution_clock::now();
             for (int i = 0; i < iterations; ++i) {
-                auto fft = gpuEngine.forwardFFT(signal);
+                auto fft = gpuEngine.forwardFFT(signalDouble);
                 auto reconstructed = gpuEngine.inverseFFT(fft);
             }
             auto endGPU = std::chrono::high_resolution_clock::now();
@@ -166,9 +167,9 @@ BenchmarkResult benchmarkBlockSize(size_t blockSize, int iterations = 10
                       << result.gpuTimeMs << " ms" << std::endl;
             
             // Test numerical accuracy vs FFTW3
-            auto gpuFftResult = gpuEngine.forwardFFT(signal);
+            auto gpuFftResult = gpuEngine.forwardFFT(signalDouble);
             auto gpuReconstructed = gpuEngine.inverseFFT(gpuFftResult);
-            double gpuError = calculateMaxError(signal, gpuReconstructed);
+            double gpuError = calculateMaxError(signal, toFloat(gpuReconstructed));
             
             std::cout << "  GPU Max error: " << std::scientific << std::setprecision(2) 
                       << gpuError << std::endl;

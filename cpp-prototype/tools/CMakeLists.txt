@@ -18,6 +18,13 @@ if(USE_FFTW3 AND FFTW3_FOUND)
     if(USE_CLFFT AND clFFT_FOUND)
         list(APPEND BENCHMARK_SOURCES ../src/gpu/clfft_engine.cpp)
     endif()
+
+    # Locate double-precision FFTW3 if available via vcpkg
+    if(NOT DEFINED FFTW3_DOUBLE_LIB)
+        if(EXISTS "C:/vcpkg/installed/x64-windows/lib/fftw3.lib")
+            set(FFTW3_DOUBLE_LIB "C:/vcpkg/installed/x64-windows/lib/fftw3.lib")
+        endif()
+    endif()
     
     add_executable(benchmark-fft ${BENCHMARK_SOURCES})
     
@@ -28,7 +35,7 @@ if(USE_FFTW3 AND FFTW3_FOUND)
     target_link_libraries(benchmark-fft
         PRIVATE
             ${FFTW3_LIBRARIES}
-            fftw3f
+            ${FFTW3_DOUBLE_LIB}
             Threads::Threads
     )
     

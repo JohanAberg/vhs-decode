@@ -13,6 +13,8 @@
 #include <cmath>
 #include <stdexcept>
 
+static constexpr double PI = 3.14159265358979323846;
+
 #ifdef HAVE_OPENCL
 
 #include "vhsdecode/opencl_context.hpp"
@@ -111,7 +113,7 @@ TestResult testPhaseUnwrapBasic() {
         std::vector<double> phase(N);
         for (size_t i = 0; i < N; ++i) {
             // Sawtooth that wraps multiple times
-            phase[i] = std::fmod(i * 0.1, 2.0 * M_PI) - M_PI;
+            phase[i] = std::fmod(i * 0.1, 2.0 * PI) - PI;
         }
         
         // Unwrap phase
@@ -150,10 +152,10 @@ TestResult testEnvelopeBasic() {
         for (size_t i = 0; i < N; ++i) {
             double t = static_cast<double>(i) / N;
             // AM envelope: 1 + 0.5 * cos(2π * 5 * t)
-            double env = 1.0 + 0.5 * std::cos(2.0 * M_PI * 5.0 * t);
+            double env = 1.0 + 0.5 * std::cos(2.0 * PI * 5.0 * t);
             // Carrier at 100 Hz
-            double carrier = std::cos(2.0 * M_PI * 100.0 * t);
-            analytic[i] = std::complex<double>(env * carrier, env * std::sin(2.0 * M_PI * 100.0 * t));
+            double carrier = std::cos(2.0 * PI * 100.0 * t);
+            analytic[i] = std::complex<double>(env * carrier, env * std::sin(2.0 * PI * 100.0 * t));
         }
         
         // Detect envelope
