@@ -4,6 +4,12 @@
 
 This document describes the GPU acceleration implementation for VHS-Decode C++ prototype (Phase 4.2-4.4).
 
+## Current Status (Dec 2025)
+
+- clFFT GPU benchmark currently fails accuracy validation (error ~1.22 vs FFTW) and runs slower than FFTW on RTX 4070 Ti Release builds.
+- Prefer FFTW for correctness; treat clFFT GPU path as experimental until accuracy and performance issues are fixed.
+- Reproduce: `cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DENABLE_GPU=ON -DUSE_CLFFT=ON -DBUILD_TOOLS=ON`, then `cmake --build build --config Release` and run `build/src/Release/benchmark-fft.exe` (expected mismatch reported in summary table).
+
 ## Phase 4.2: clFFT GPU FFT Integration (COMPLETE)
 
 ### Components Implemented

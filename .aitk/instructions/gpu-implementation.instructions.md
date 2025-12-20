@@ -10,12 +10,13 @@ priority: high
 
 When working on GPU acceleration for VHS-Decode, follow these critical guidelines to ensure correctness, performance, and maintainability.
 
-**Current state (Dec 2025):** GPU Phase 2 is active and validated on RTX hardware with an end-to-end speedup of ~34% versus the CPU baseline (2.49 FPS GPU vs 2.19 FPS CPU on RTX 4070 Ti). Always keep CPU fallback intact and document any regressions.
+**Current status (Dec 2025):**
+- Python CuPy path (`decode.py`): Phase 2 active with ~34% end-to-end speedup vs CPU baseline (2.49 FPS GPU vs 2.19 FPS CPU on RTX 4070 Ti). Keep CPU fallback intact; validate with `python decode.py vhs --system PAL --gpu --length 11 sample_data/out2.u8 test` after activating the venv (`.\.venv\Scripts\Activate.ps1`) and reinstalling editable deps after code changes (`pip install -e . --no-deps`).
+- C++ OpenCL/clFFT path (`cpp-prototype`): GPU benchmarks currently slower than FFTW and fail accuracy checks (clFFT error ≈1.22 vs FFTW). Configure Release with `-DENABLE_GPU=ON -DUSE_CLFFT=ON -DBUILD_TOOLS=ON`, then run `Release\\benchmark-fft.exe`; expect mismatch and prefer FFTW for correctness until clFFT fixes land.
 
-**Standard smoke test:**
-- Activate venv: `.\.venv\Scripts\Activate.ps1`
-- Quick GPU decode: `python decode.py vhs --system PAL --gpu --length 11 sample_data/out2.u8 test`
-- After code changes: `pip install -e . --no-deps` to avoid stale bytecode during validation.
+**Smoke tests:**
+- Python: `python decode.py vhs --system PAL --gpu --length 11 sample_data/out2.u8 test` (venv activated; reinstall with `pip install -e . --no-deps` after code changes).
+- C++: `cmake -S cpp-prototype -B cpp-prototype/build -DCMAKE_BUILD_TYPE=Release -DENABLE_GPU=ON -DUSE_CLFFT=ON -DBUILD_TOOLS=ON` then `cmake --build cpp-prototype/build --config Release` and run `cpp-prototype/build/src/Release/benchmark-fft.exe` (expect accuracy failure today).
 
 ## Core Principles
 

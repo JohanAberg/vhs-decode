@@ -4,7 +4,7 @@ This guide explains how to set up and use GPU acceleration for VHS-Decode.
 
 ## Overview
 
-GPU acceleration offloads FFT, filtering, and demodulation to CUDA cores while maintaining CPU parity. The current Phase 2 implementation is validated on RTX hardware with a **34% end-to-end speedup** versus the CPU baseline (2.49 FPS GPU vs 2.19 FPS CPU on an RTX 4070 Ti). Output quality matches CPU and the pipeline automatically falls back to CPU if GPU resources are unavailable or exhausted.
+GPU acceleration offloads FFT, filtering, and demodulation to CUDA cores. The current Python CuPy path delivers ~34% end-to-end speedup vs the CPU baseline (2.49 FPS GPU vs 2.19 FPS CPU on an RTX 4070 Ti) with identical output quality and automatic CPU fallback on resource issues. For the C++ OpenCL/clFFT prototype, see `cpp-prototype/README.md` and `cpp-prototype/GPU_IMPLEMENTATION_GUIDE.md` (GPU benchmarks there are currently slower than FFTW and fail accuracy checks).
 
 ### Quick Start (Windows / venv)
 
