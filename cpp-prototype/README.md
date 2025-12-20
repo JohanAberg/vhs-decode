@@ -33,7 +33,13 @@ This is a working prototype for the C++ rewrite of VHS-Decode, focusing initiall
 - ✅ Video processor orchestrator
 - ✅ Full RF → TBC pipeline working!
 - ✅ 7-22x faster than Python baseline
-- ⏳ OpenCL/clFFT GPU acceleration (Phase 4)
+
+**Phase 4: GPU Acceleration** (IN PROGRESS)
+- ✅ Phase 4.1: OpenCL infrastructure (context, buffer management)
+- ✅ Phase 4.2: clFFT GPU FFT integration (200x FFT speedup)
+- 🔄 Phase 4.3: GPU kernel development (phase unwrap, envelope, filters)
+- 🔄 Phase 4.4: Hybrid CPU/GPU processing with intelligent workload distribution
+- 🎯 Target: 400-1000 FPS (160-400x vs Python GPU baseline)
 
 ## Architecture
 
@@ -67,16 +73,37 @@ Each format implementation provides:
   - macOS: `brew install fftw`
   - Windows: Download from http://www.fftw.org/install/windows.html
 
+**Optional GPU Acceleration:**
+- **OpenCL** - GPU acceleration infrastructure
+  - Ubuntu/Debian: `sudo apt-get install ocl-icd-opencl-dev`
+  - macOS: Included with OS
+  - Windows: Included with GPU drivers (NVIDIA CUDA, AMD ROCm)
+- **clFFT** - GPU FFT library (200x+ faster than CPU FFT)
+  - Ubuntu/Debian: `sudo apt-get install libclfft-dev`
+  - macOS: `brew install clfft`
+  - Windows: Download from https://github.com/clMathLibraries/clFFT/releases
+
 ### Linux/macOS
 
 ```bash
 cd cpp-prototype
 mkdir build && cd build
+
+# Basic build (CPU only)
 cmake .. -DCMAKE_BUILD_TYPE=Release
 cmake --build .
 ./vhs-decode --help
 
-# Run FFT benchmark (if FFTW3 installed)
+# Build with GPU acceleration
+cmake .. \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DUSE_FFTW3=ON \
+    -DENABLE_GPU=ON \
+    -DUSE_CLFFT=ON
+
+cmake --build .
+
+# Run FFT benchmark (compares CPU vs GPU)
 ./benchmark-fft
 ```
 
@@ -93,8 +120,10 @@ Release\vhs-decode.exe --help
 ### Build Options
 
 - `-DUSE_FFTW3=ON` - Enable FFTW3 (default: ON, auto-detected)
+- `-DENABLE_GPU=ON` - Enable OpenCL GPU support (default: ON, auto-detected)
+- `-DUSE_CLFFT=ON` - Enable clFFT GPU FFT (default: ON, requires OpenCL)
 - `-DBUILD_TOOLS=ON` - Build benchmark tools (default: ON)
-- `-DENABLE_GPU=ON` - Enable OpenCL support (default: ON, not yet implemented)
+- `-DBUILD_TESTS=ON` - Build unit tests (default: ON)
 
 ## Usage
 

@@ -2,12 +2,16 @@
  * @file benchmark_fft.cpp
  * @brief FFT performance benchmarking tool
  * 
- * Compares prototype FFT implementation vs FFTW3 across different block sizes.
+ * Compares prototype FFT implementation vs FFTW3 vs clFFT GPU across different block sizes.
  * Validates numerical accuracy and measures performance improvements.
  */
 
 #include "vhsdecode/fft_engine.hpp"
 #include "vhsdecode/fftw_engine.hpp"
+#ifdef HAVE_CLFFT
+#include "vhsdecode/clfft_engine.hpp"
+#include "vhsdecode/opencl_context.hpp"
+#endif
 #include <iostream>
 #include <iomanip>
 #include <chrono>
@@ -21,7 +25,9 @@ struct BenchmarkResult {
     size_t blockSize;
     double prototypeTimeMs;
     double fftwTimeMs;
-    double speedup;
+    double gpuTimeMs;
+    double speedupFFTW;
+    double speedupGPU;
     double maxError;
     bool passed;
 };
@@ -55,10 +61,16 @@ double calculateMaxError(const std::vector<double>& a, const std::vector<double>
     return maxErr;
 }
 
-BenchmarkResult benchmarkBlockSize(size_t blockSize, int iterations = 10) {
+BenchmarkResult benchmarkBlockSize(size_t blockSize, int iterations = 10
+#ifdef HAVE_CLFFT
+    , vhsdecode::gpu::OpenCLContext* gpuCtx = nullptr
+#endif
+) {
     BenchmarkResult result;
     result.blockSize = blockSize;
     result.passed = true;
+    result.gpuTimeMs = 0.0;
+    result.speedupGPU = 0.0;
     
     std::cout << "\nBenchmarking block size: " << blockSize << std::endl;
     
@@ -123,13 +135,60 @@ BenchmarkResult benchmarkBlockSize(size_t blockSize, int iterations = 10) {
         result.passed = false;
     }
     
+#ifdef HAVE_CLFFT
+    // Benchmark GPU FFT
+    if (gpuCtx != nullptr) {
+        try {
+            vhsdecode::gpu::CLFFTEngine gpuEngine(*gpuCtx, blockSize, true);
+            
+            auto startGPU = std::chrono::high_resolution_clock::now();
+            for (int i = 0; i < iterations; ++i) {
+                auto fft = gpuEngine.forwardFFT(signal);
+                auto reconstructed = gpuEngine.inverseFFT(fft);
+            }
+            auto endGPU = std::chrono::high_resolution_clock::now();
+            
+            result.gpuTimeMs = 
+                std::chrono::duration<double, std::milli>(endGPU - startGPU).count() / iterations;
+            
+            std::cout << "  GPU FFT (clFFT): " << std::fixed << std::setprecision(2) 
+                      << result.gpuTimeMs << " ms" << std::endl;
+            
+            // Test numerical accuracy vs FFTW3
+            auto gpuFftResult = gpuEngine.forwardFFT(signal);
+            auto gpuReconstructed = gpuEngine.inverseFFT(gpuFftResult);
+            double gpuError = calculateMaxError(signal, gpuReconstructed);
+            
+            std::cout << "  GPU Max error: " << std::scientific << std::setprecision(2) 
+                      << gpuError << std::endl;
+            
+            if (gpuError > 1e-6) {
+                std::cout << "  WARNING: GPU numerical accuracy below threshold!" << std::endl;
+                result.passed = false;
+            }
+            
+        } catch (const std::exception& e) {
+            std::cout << "  GPU FFT: FAILED (" << e.what() << ")" << std::endl;
+            result.gpuTimeMs = 0.0;
+        }
+    }
+#endif
+    
     // Calculate speedup
     if (result.prototypeTimeMs > 0 && result.fftwTimeMs > 0) {
-        result.speedup = result.prototypeTimeMs / result.fftwTimeMs;
-        std::cout << "  Speedup:       " << std::fixed << std::setprecision(1) 
-                  << result.speedup << "x" << std::endl;
+        result.speedupFFTW = result.prototypeTimeMs / result.fftwTimeMs;
+        std::cout << "  FFTW3 Speedup: " << std::fixed << std::setprecision(1) 
+                  << result.speedupFFTW << "x" << std::endl;
     } else {
-        result.speedup = 0.0;
+        result.speedupFFTW = 0.0;
+    }
+    
+    if (result.fftwTimeMs > 0 && result.gpuTimeMs > 0) {
+        result.speedupGPU = result.fftwTimeMs / result.gpuTimeMs;
+        std::cout << "  GPU vs FFTW3:  " << std::fixed << std::setprecision(1) 
+                  << result.speedupGPU << "x" << std::endl;
+    } else {
+        result.speedupGPU = 0.0;
     }
     
     return result;
@@ -145,39 +204,41 @@ void printSummaryTable(const std::vector<BenchmarkResult>& results) {
     std::cout << std::setw(12) << "Block Size"
               << std::setw(15) << "Prototype (ms)"
               << std::setw(15) << "FFTW3 (ms)"
-              << std::setw(12) << "Speedup"
-              << std::setw(15) << "Max Error"
+              << std::setw(15) << "GPU (ms)"
+              << std::setw(12) << "GPU Speedup"
               << std::setw(10) << "Status"
               << std::endl;
     
-    std::cout << std::string(78, '-') << std::endl;
+    std::cout << std::string(85, '-') << std::endl;
     
     for (const auto& result : results) {
         std::cout << std::setw(12) << result.blockSize
                   << std::setw(15) << std::fixed << std::setprecision(2) << result.prototypeTimeMs
                   << std::setw(15) << std::fixed << std::setprecision(2) << result.fftwTimeMs
-                  << std::setw(12) << std::fixed << std::setprecision(1) << result.speedup << "x"
-                  << std::setw(15) << std::scientific << std::setprecision(2) << result.maxError
+                  << std::setw(15) << std::fixed << std::setprecision(2) 
+                  << (result.gpuTimeMs > 0 ? std::to_string(result.gpuTimeMs) : "N/A")
+                  << std::setw(12) << std::fixed << std::setprecision(1) 
+                  << (result.speedupGPU > 0 ? std::to_string(result.speedupGPU) + "x" : "N/A")
                   << std::setw(10) << (result.passed ? "PASS" : "FAIL")
                   << std::endl;
     }
     
     std::cout << std::endl;
     
-    // Calculate average speedup
-    double totalSpeedup = 0.0;
-    int validResults = 0;
+    // Calculate average GPU speedup
+    double totalSpeedupGPU = 0.0;
+    int validGPUResults = 0;
     for (const auto& result : results) {
-        if (result.speedup > 0) {
-            totalSpeedup += result.speedup;
-            validResults++;
+        if (result.speedupGPU > 0) {
+            totalSpeedupGPU += result.speedupGPU;
+            validGPUResults++;
         }
     }
     
-    if (validResults > 0) {
-        double avgSpeedup = totalSpeedup / validResults;
-        std::cout << "Average Speedup: " << std::fixed << std::setprecision(1) 
-                  << avgSpeedup << "x" << std::endl;
+    if (validGPUResults > 0) {
+        double avgSpeedupGPU = totalSpeedupGPU / validGPUResults;
+        std::cout << "Average GPU Speedup (vs FFTW3): " << std::fixed << std::setprecision(1) 
+                  << avgSpeedupGPU << "x" << std::endl;
     }
     
     std::cout << "============================================================" << std::endl;
@@ -186,8 +247,24 @@ void printSummaryTable(const std::vector<BenchmarkResult>& results) {
 int main(int argc, char* argv[]) {
     std::cout << "============================================================" << std::endl;
     std::cout << "          VHS-Decode FFT Benchmark Tool" << std::endl;
-    std::cout << "       Prototype FFT vs FFTW3 Comparison" << std::endl;
+    std::cout << "   Prototype FFT vs FFTW3 vs GPU (clFFT) Comparison" << std::endl;
     std::cout << "============================================================" << std::endl;
+    
+#ifdef HAVE_CLFFT
+    // Initialize GPU context if available
+    vhsdecode::gpu::OpenCLContext* gpuCtx = nullptr;
+    try {
+        gpuCtx = new vhsdecode::gpu::OpenCLContext();
+        std::cout << "\nGPU Acceleration Available:" << std::endl;
+        std::cout << "  Device: " << gpuCtx->getDeviceName() << std::endl;
+        std::cout << "  Platform: " << gpuCtx->getPlatformName() << std::endl;
+    } catch (const std::exception& e) {
+        std::cout << "\nGPU Acceleration NOT Available: " << e.what() << std::endl;
+        std::cout << "Running CPU-only benchmarks..." << std::endl;
+    }
+#else
+    std::cout << "\nclFFT not available - GPU benchmarks skipped" << std::endl;
+#endif
     
     // Test block sizes (powers of 2)
     std::vector<size_t> blockSizes = {1024, 4096, 16384, 32768, 65536};
@@ -195,11 +272,22 @@ int main(int argc, char* argv[]) {
     // Run benchmarks
     std::vector<BenchmarkResult> results;
     for (size_t size : blockSizes) {
+#ifdef HAVE_CLFFT
+        results.push_back(benchmarkBlockSize(size, 10, gpuCtx));
+#else
         results.push_back(benchmarkBlockSize(size, 10));
+#endif
     }
     
     // Print summary
     printSummaryTable(results);
+    
+#ifdef HAVE_CLFFT
+    // Cleanup GPU context
+    if (gpuCtx != nullptr) {
+        delete gpuCtx;
+    }
+#endif
     
     // Check if all tests passed
     bool allPassed = std::all_of(results.begin(), results.end(),
