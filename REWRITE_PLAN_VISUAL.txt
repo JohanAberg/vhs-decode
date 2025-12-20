@@ -1,0 +1,214 @@
+═══════════════════════════════════════════════════════════════════════════════
+                      VHS-DECODE C++/OPENCL REWRITE PLAN
+                            Visual Summary Diagram
+═══════════════════════════════════════════════════════════════════════════════
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                            CURRENT STATE (Python)                           │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  Language:        Python + NumPy/SciPy + CuPy                              │
+│  Lines of Code:   ~36,000 LOC                                              │
+│  Performance:     2.49 FPS (GPU), 2.19 FPS (CPU 8-thread)                  │
+│  Memory:          ~500-600 MB                                              │
+│  GPU Support:     NVIDIA only (CuPy/CUDA)                                  │
+│  Deployment:      Requires Python runtime + dependencies                   │
+│  Threading:       Limited by Python GIL                                    │
+│                                                                             │
+│  ┌────────────────────────────────────────────────────────────────────┐   │
+│  │  decode.py → VHSDecode → VHSRFDecodeGPU → DemodCache              │   │
+│  │      ↓              ↓              ↓              ↓                 │   │
+│  │   FFT/Filter   FM Demod   Chroma Sep    TBC Writer                │   │
+│  │    (NumPy)      (CuPy)      (NumPy)      (Python)                  │   │
+│  └────────────────────────────────────────────────────────────────────┘   │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                      ▼
+                            [TRANSFORMATION PROCESS]
+                                      ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         TARGET STATE (C++/OpenCL)                           │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  Language:        C++17/20 + OpenCL                                        │
+│  Lines of Code:   ~15,000-20,000 LOC                                       │
+│  Performance:     15-25 FPS (6-10x faster) [conservative target]           │
+│  Memory:          ~200 MB (3x less)                                        │
+│  GPU Support:     NVIDIA + AMD + Intel (OpenCL)                            │
+│  Deployment:      Single native binary, no runtime                         │
+│  Threading:       Full native multi-threading                              │
+│                                                                             │
+│  ┌────────────────────────────────────────────────────────────────────┐   │
+│  │  vhs-decode → VHSDecoder → GPUContext                              │   │
+│  │      ↓              ↓            ↓                                  │   │
+│  │  RFProcessor  FMDemodulator  VideoProcessor                        │   │
+│  │      ↓              ↓            ↓                                  │   │
+│  │  FFT(clFFT)   Phase Unwrap  Chroma Sep    TBC Writer               │   │
+│  │  Filters      Envelope Det   Time Base     (C++ I/O)               │   │
+│  │  Hilbert      Spike Replace  Dropouts                              │   │
+│  │                                                                     │   │
+│  │  [All with OpenCL GPU acceleration + CPU fallback]                 │   │
+│  └────────────────────────────────────────────────────────────────────┘   │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+
+═══════════════════════════════════════════════════════════════════════════════
+                           PERFORMANCE IMPROVEMENTS
+═══════════════════════════════════════════════════════════════════════════════
+
+        Metric          │  Current   │   Target   │  Improvement
+  ──────────────────────┼────────────┼────────────┼──────────────
+   Decode Speed (FPS)   │   2.49     │   15-25    │   6-10x faster
+   Memory Usage (MB)    │   600      │   200      │   3x reduction
+   GPU Compatibility    │  NVIDIA    │   All      │   Universal
+   Deployment Size      │  ~500 MB   │   ~50 MB   │   10x smaller
+   Startup Time         │   ~5 sec   │   <1 sec   │   5x faster
+   Thread Efficiency    │   Limited  │   Full     │   Unlimited
+
+
+═══════════════════════════════════════════════════════════════════════════════
+                         IMPLEMENTATION PHASES (12-18 MONTHS)
+═══════════════════════════════════════════════════════════════════════════════
+
+  Phase 1 │ Foundation           │ Weeks 1-8    │ Build, GPU, I/O
+  ────────┼──────────────────────┼──────────────┼────────────────────────
+  Phase 2 │ RF Processing        │ Weeks 9-16   │ FFT, Filters, Hilbert
+  ────────┼──────────────────────┼──────────────┼────────────────────────
+  Phase 3 │ FM Demodulation      │ Weeks 17-24  │ Phase Unwrap, Envelope
+  ────────┼──────────────────────┼──────────────┼────────────────────────
+  Phase 4 │ Video Processing     │ Weeks 25-32  │ Chroma, TBC, Dropouts
+  ────────┼──────────────────────┼──────────────┼────────────────────────
+  Phase 5 │ Integration & Opt    │ Weeks 33-40  │ Pipeline, Performance
+  ────────┼──────────────────────┼──────────────┼────────────────────────
+  Phase 6 │ Testing & Validation │ Weeks 41-48  │ QA, Documentation
+  ────────┼──────────────────────┼──────────────┼────────────────────────
+  Phase 7 │ Advanced Features    │ Weeks 49-56  │ GUI, HiFi, Polish
+  ────────┼──────────────────────┼──────────────┼────────────────────────
+  Phase 8 │ Release              │ Weeks 57+    │ Deployment, Support
+
+
+═══════════════════════════════════════════════════════════════════════════════
+                          CRITICAL OPENCL KERNELS
+═══════════════════════════════════════════════════════════════════════════════
+
+  Kernel Name          │ Current Time │ Expected Speedup │ Priority
+  ─────────────────────┼──────────────┼──────────────────┼──────────
+  Phase Unwrapping     │     46%      │     5-10x        │  ★★★★★
+  Envelope Detection   │     22%      │     6-10x        │  ★★★★☆
+  FFT Operations       │     15-20%   │     8-12x        │  ★★★★☆
+  Chroma Heterodyne    │     11%      │     4-8x         │  ★★★☆☆
+  Spike Replacement    │     5-10%    │     3-6x         │  ★★☆☆☆
+
+
+═══════════════════════════════════════════════════════════════════════════════
+                            TECHNOLOGY STACK
+═══════════════════════════════════════════════════════════════════════════════
+
+  Category       │ Technology        │ Purpose
+  ───────────────┼───────────────────┼────────────────────────────────────
+  Language       │ C++17/20          │ Modern features, performance
+  GPU API        │ OpenCL 1.2+       │ Cross-vendor GPU support
+  FFT (GPU)      │ clFFT             │ Optimized GPU FFT
+  FFT (CPU)      │ FFTW3             │ CPU fallback path
+  Linear Algebra │ Eigen3            │ SIMD-optimized math
+  JSON           │ nlohmann/json     │ Metadata I/O
+  Logging        │ spdlog            │ Fast structured logging
+  CLI            │ CLI11             │ Modern argument parsing
+  Testing        │ Catch2            │ Expressive unit tests
+  Build          │ CMake 3.16+       │ Cross-platform builds
+
+
+═══════════════════════════════════════════════════════════════════════════════
+                          DOCUMENTATION STRUCTURE
+═══════════════════════════════════════════════════════════════════════════════
+
+  ┌─────────────────────────────────────────────────────────────────────┐
+  │  CPP_REWRITE_INDEX.md (11 KB)                                       │
+  │  └─ Navigation guide for all documentation                          │
+  │     • Quick reference for different roles                           │
+  │     • Statistics and metrics                                        │
+  │     • Implementation checklist                                      │
+  └─────────────────────────────────────────────────────────────────────┘
+                                    │
+          ┌─────────────────────────┴─────────────────────────┐
+          │                                                   │
+  ┌───────▼────────────────────┐                 ┌───────────▼──────────────┐
+  │  CPP_REWRITE_SUMMARY.md    │                 │  CPP_OPENCL_REWRITE_     │
+  │  (13 KB)                   │                 │  PLAN.md (43 KB)         │
+  │                            │                 │                          │
+  │  • Executive summary       │                 │  • Complete technical    │
+  │  • Visual diagrams         │                 │    specification         │
+  │  • Quick reference         │                 │  • Detailed component    │
+  │  • 5-10 minute read        │                 │    designs               │
+  │  • For all audiences       │                 │  • OpenCL kernel code    │
+  │                            │                 │  • 45-60 minute read     │
+  │                            │                 │  • For developers        │
+  └────────────────────────────┘                 └──────────────────────────┘
+
+
+═══════════════════════════════════════════════════════════════════════════════
+                             PROJECT STATISTICS
+═══════════════════════════════════════════════════════════════════════════════
+
+  Documentation Created:
+  ─────────────────────────────────────────────────────────────────────────
+    • CPP_REWRITE_INDEX.md          376 lines   11 KB
+    • CPP_REWRITE_SUMMARY.md        442 lines   13 KB
+    • CPP_OPENCL_REWRITE_PLAN.md  1,641 lines   43 KB
+    ───────────────────────────────────────────────────────
+    TOTAL:                        2,459 lines   67 KB
+
+  Current Codebase Analyzed:
+  ─────────────────────────────────────────────────────────────────────────
+    • Python Files:               ~36,000 lines
+    • Key Components Reviewed:
+      - lddecode/core.py           4,514 lines
+      - vhsdecode/process.py       1,325 lines
+      - vhsdecode/process_gpu.py   1,191 lines
+    • Existing C++ Tools:          Multiple Qt-based applications
+    • Test Infrastructure:         Reference captures and validation
+
+
+═══════════════════════════════════════════════════════════════════════════════
+                               SUCCESS METRICS
+═══════════════════════════════════════════════════════════════════════════════
+
+  Performance Metrics:
+  ──────────────────────────────────────────────────────────────────────────
+    ✓ Speed:        15-25 FPS (6-10x faster than Python GPU)
+    ✓ Memory:       < 200 MB peak usage (3x reduction)
+    ✓ Accuracy:     Output matches Python within 0.1%
+    ✓ Platform:     Works on 95%+ systems with OpenCL 1.2+
+
+  Quality Metrics:
+  ──────────────────────────────────────────────────────────────────────────
+    ✓ Coverage:     > 80% code coverage
+    ✓ Bugs:         < 1 critical bug per 1000 LOC
+    ✓ Build:        100% CI success rate
+    ✓ Docs:         Complete API documentation
+
+  User Metrics:
+  ──────────────────────────────────────────────────────────────────────────
+    ✓ Install:      < 5 minutes from download to use
+    ✓ Learning:     Minimal curve for existing users
+    ✓ Reliability:  < 1 crash per 100 hours of operation
+    ✓ Real-time:    Can decode at 1x speed on mid-range GPU
+
+
+═══════════════════════════════════════════════════════════════════════════════
+                           READY FOR IMPLEMENTATION
+═══════════════════════════════════════════════════════════════════════════════
+
+  Status:    ✓ Plan Complete
+  Timeline:  12-18 months
+  Resources: 1-2 full-time developers
+  Next Step: Review & approval, then Phase 1 kickoff
+
+  Documentation: COMPLETE
+  Architecture:  DESIGNED
+  Roadmap:       DEFINED
+  Risks:         ASSESSED
+  Technology:    SELECTED
+
+═══════════════════════════════════════════════════════════════════════════════
