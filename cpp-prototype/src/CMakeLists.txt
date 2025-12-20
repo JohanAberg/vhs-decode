@@ -22,6 +22,19 @@ if(USE_FFTW3 AND FFTW3_FOUND)
     list(APPEND SOURCES rf/fftw_engine.cpp)
 endif()
 
+# Add OpenCL sources if available
+if(ENABLE_GPU AND OpenCL_FOUND)
+    list(APPEND SOURCES 
+        gpu/opencl_context.cpp
+        gpu/opencl_buffer.cpp
+    )
+endif()
+
+# Add clFFT sources if available
+if(USE_CLFFT AND clFFT_FOUND)
+    list(APPEND SOURCES gpu/clfft_engine.cpp)
+endif()
+
 # Create executable
 add_executable(vhs-decode-cpp ${SOURCES})
 
@@ -34,6 +47,16 @@ target_link_libraries(vhs-decode-cpp
 # Link FFTW3 if available
 if(USE_FFTW3 AND FFTW3_FOUND)
     target_link_libraries(vhs-decode-cpp PRIVATE FFTW3::fftw3)
+endif()
+
+# Link OpenCL if available
+if(ENABLE_GPU AND OpenCL_FOUND)
+    target_link_libraries(vhs-decode-cpp PRIVATE OpenCL::OpenCL)
+endif()
+
+# Link clFFT if available
+if(USE_CLFFT AND clFFT_FOUND)
+    target_link_libraries(vhs-decode-cpp PRIVATE clFFT::clFFT)
 endif()
 
 # Set properties
