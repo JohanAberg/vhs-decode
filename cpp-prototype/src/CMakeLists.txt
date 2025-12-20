@@ -56,7 +56,6 @@ target_link_libraries(vhs-decode-cpp
 # Link FFTW3 if available
 if(USE_FFTW3 AND FFTW3_FOUND)
     target_link_libraries(vhs-decode-cpp PRIVATE ${FFTW3_LIBRARIES})
-    target_link_libraries(vhs-decode-cpp PRIVATE fftw3f)  # Add float version explicitly
 endif()
 
 # Link OpenCL if available

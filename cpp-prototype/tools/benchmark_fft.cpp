@@ -49,6 +49,16 @@ std::vector<float> generateTestSignal(size_t size) {
     return signal;
 }
 
+// Convert float vector to double vector
+std::vector<double> toDouble(const std::vector<float>& input) {
+    return std::vector<double>(input.begin(), input.end());
+}
+
+// Convert double vector to float vector
+std::vector<float> toFloat(const std::vector<double>& input) {
+    return std::vector<float>(input.begin(), input.end());
+}
+
 // Calculate maximum absolute error
 float calculateMaxError(const std::vector<float>& a, const std::vector<float>& b) {
     if (a.size() != b.size()) return std::numeric_limits<float>::max();
@@ -102,10 +112,11 @@ BenchmarkResult benchmarkBlockSize(size_t blockSize, int iterations = 10
     // Benchmark FFTW3
     try {
         FFTWEngine fftwEngine(blockSize, false);
+        std::vector<double> signalDouble = toDouble(signal);
         
         auto startFFTW = std::chrono::high_resolution_clock::now();
         for (int i = 0; i < iterations; ++i) {
-            auto fft = fftwEngine.forwardFFT(signal);
+            auto fft = fftwEngine.forwardFFT(signalDouble);
             auto reconstructed = fftwEngine.inverseFFT(fft);
         }
         auto endFFTW = std::chrono::high_resolution_clock::now();
@@ -117,9 +128,9 @@ BenchmarkResult benchmarkBlockSize(size_t blockSize, int iterations = 10
                   << result.fftwTimeMs << " ms" << std::endl;
         
         // Test numerical accuracy
-        auto fftResult = fftwEngine.forwardFFT(signal);
+        auto fftResult = fftwEngine.forwardFFT(signalDouble);
         auto reconstructed = fftwEngine.inverseFFT(fftResult);
-        result.maxError = calculateMaxError(signal, reconstructed);
+        result.maxError = calculateMaxError(signal, toFloat(reconstructed));
         
         std::cout << "  Max error:     " << std::scientific << std::setprecision(2) 
                   << result.maxError << std::endl;
