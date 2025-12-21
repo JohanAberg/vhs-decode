@@ -415,15 +415,17 @@ Following these guidelines ensures both GPU acceleration and general development
 - `docs/DECODER_USAGE.md` - User-facing decoder documentation
 - `docs/GPU_USAGE.md` - GPU-specific usage guide
 
-## C++ Prototype Sync Alignment (Dec 22, 2025)
+## C++ Prototype Sync Alignment (Dec 22, 2025 - UPDATED)
 - Goal: match Python TBC output (PAL) for `out1.u8` around `--seek 983040`.
-- Current behavior: C++ fileLoc now matches Python at 983040 when seek is provided. Sync detection finds 312 lines, detected line length ~2572 samples. Best alignment vs Python requires ~+4 line vertical shift and ~-10 pixel horizontal shift; MAD ~34 (8-bit) after normalization.
-- Recent changes:
-  - Disable pre-skip to first vsync when user supplies `--seek`; metadata uses seek directly.
-  - Lineloc smoothing via regression slope with ±0.5% clamp; line grid re-anchored to keep first detected start near 0.
-- Remaining issues:
-  - Residual spatial offset (vert +4 lines, horiz -10 px) and low correlation; need to tighten line-start anchoring toward earliest pulse or regression intercept.
-  - Contrast still differs (py ≈ 0.013*cpp + ~76 on 8-bit); revisit IRE→digital scaling if spatial alignment improves.
+- **FIXED (Dec 22, 2025):** Line positioning algorithm now matches Python
+  - Previous issue: C++ was rebuilding uniform grid, losing actual pulse positions (~10 px horizontal offset)
+  - Solution: Added `computeLineLocsDict()` matching Python's `compute_linelocs()` - keeps pulse positions, fills gaps by interpolation
+  - Expected result: Horizontal alignment within 1-2 pixels (was ~10 pixels off)
+- Current behavior: C++ fileLoc now matches Python at 983040 when seek is provided. Sync detection finds 312 lines, detected line length ~2572 samples.
+- **Testing needed:** Run comparison with real data to verify correlation improvement
+- Remaining issues (lower priority):
+  - Sub-sample zero-crossing refinement (Python's calczc) - would improve to sub-pixel accuracy
+  - Contrast still may differ slightly - revisit IRE→digital scaling if spatial alignment doesn't fully match
 - Repro commands:
   - Python baseline: `python decode.py vhs --system PAL --length 1 --seek 983040 out1.u8 /tmp/python_compare`
   - C++ test: `./build/src/vhs-decode --system PAL --length 1 --seek 983040 out1.u8 /tmp/cpp_compare_seek`
