@@ -4,6 +4,8 @@
 #include <algorithm>
 #include <iostream>
 #include <iomanip>
+#include <limits>
+#include <vector>
 
 namespace vhsdecode {
 namespace demod {
@@ -128,6 +130,64 @@ public:
         
         return envelope;
     }
+
+    size_t replaceSpikes(RealArray& video, const ComplexArray& analyticSignal, float threshold) {
+        const size_t N = video.size();
+        std::vector<size_t> toFix;
+        
+        // Find spikes
+        // Python: if np.max(demod[20:-20]) > check_value:
+        size_t margin = 20;
+        if (N <= 2 * margin) return 0;
+
+        for (size_t i = margin; i < N - margin; ++i) {
+            if (video[i] > threshold) {
+                toFix.push_back(i);
+            }
+        }
+        
+        if (toFix.empty()) return 0;
+        
+        // Compute diff of analytic signal
+        // Python: np.ediff1d(hilbert, to_begin=0)
+        ComplexArray diffSignal(N);
+        diffSignal[0] = std::complex<float>(0, 0);
+        for (size_t i = 1; i < N; ++i) {
+            diffSignal[i] = analyticSignal[i] - analyticSignal[i-1];
+        }
+        
+        // Demodulate diff signal
+        RealArray demodDiffed = fmDemodulate(diffSignal, config.inputFreqMHz * 1e6f);
+        
+        // Apply replacement
+        // Python: replace_spikes(demod, demod_b, check_value, replace_start=8, replace_end=30)
+        int replaceStart = 8;
+        int replaceEnd = 30;
+        
+        size_t replacedCount = 0;
+        for (size_t i : toFix) {
+            size_t start = (i >= static_cast<size_t>(replaceStart)) ? i - replaceStart : 0;
+            size_t end = std::min(i + replaceEnd, N - 1);
+            
+            // Only replace if it seems to help
+            // if max(demod_diffed[start:end]) < max(demod[start:end]):
+            float maxDiffed = -std::numeric_limits<float>::infinity();
+            float maxOriginal = -std::numeric_limits<float>::infinity();
+            
+            for (size_t j = start; j < end; ++j) {
+                maxDiffed = std::max(maxDiffed, demodDiffed[j]);
+                maxOriginal = std::max(maxOriginal, video[j]);
+            }
+            
+            if (maxDiffed < maxOriginal) {
+                for (size_t j = start; j < end; ++j) {
+                    video[j] = demodDiffed[j];
+                }
+                replacedCount++;
+            }
+        }
+        return replacedCount;
+    }
 };
 
 FMDemodulator::FMDemodulator(const ProcessingConfig& config)
@@ -157,6 +217,10 @@ FMDemodulator::Result FMDemodulator::demodulate(const ComplexArray& analyticSign
     result.chroma = result.video;
     
     return result;
+}
+
+size_t FMDemodulator::replaceSpikes(RealArray& video, const ComplexArray& analyticSignal, float threshold) {
+    return impl_->replaceSpikes(video, analyticSignal, threshold);
 }
 
 } // namespace demod

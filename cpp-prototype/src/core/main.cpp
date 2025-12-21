@@ -626,6 +626,18 @@ int main(int argc, char* argv[]) {
                     std::cout << "] MHz\n";
                 }
                 
+                // Spike replacement (Diff Demod)
+                // Threshold = 2 * (100 IRE level)
+                // 100 IRE = 4.8 MHz (PAL) -> Threshold = 9.6 MHz
+                // Testing lower threshold to catch sparkles: 1.5 * 4.8 = 7.2 MHz
+                float whiteLevelHz = ire0Hz + (100.0f * hzPerIre);
+                float spikeThresholdHz = whiteLevelHz * 2.0f;
+                size_t replaced = fmDemod.replaceSpikes(fmResult.video, rfResult.analyticSignal, spikeThresholdHz);
+                
+                if (replaced > 0 && processedBlocks < 5) {
+                    std::cout << "  Replaced " << replaced << " spikes in block " << processedBlocks << "\n";
+                }
+
                 // Apply video filters (De-emphasis + LPF) in frequency domain
                 // FFT -> multiply by filters -> IFFT
                 {

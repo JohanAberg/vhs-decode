@@ -281,9 +281,10 @@ Lines are now aligned to horizontal sync!
 - Spike detection and replacement (Python's `diff_demod`)
 - Better envelope-based processing
 
-### 4. Dropout Detection/Compensation
-- Use envelope signal to detect dropouts
-- Replace dropout samples with interpolated data
+### 4. Dropout Detection/Compensation (PARTIAL)
+- [x] Diff Demod / Spike Replacement (FM domain)
+- [ ] Envelope Dropout Detection (RF domain)
+- [ ] Replace dropout samples with interpolated data
 
 ### 5. Color Processing
 - Color burst detection and phase measurement

@@ -47,6 +47,15 @@ public:
      * @return Demodulation result with video, chroma, envelope
      */
     Result demodulate(const ComplexArray& analyticSignal);
+
+    /**
+     * @brief Replace spikes in demodulated signal using differential demodulation
+     * @param video Demodulated video signal (modified in-place)
+     * @param analyticSignal Original analytic signal
+     * @param threshold Frequency threshold for spike detection (Hz)
+     * @return Number of samples replaced
+     */
+    size_t replaceSpikes(RealArray& video, const ComplexArray& analyticSignal, float threshold);
     
     /**
      * @brief Get configuration
