@@ -3,6 +3,7 @@
 
 #include "vhsdecode/types.hpp"
 #include <vector>
+#include <map>
 #include <cstdint>
 
 namespace vhsdecode {
@@ -98,6 +99,25 @@ public:
     std::vector<LineInfo> computeLineLocations(
         const std::vector<Pulse>& pulses,
         double expectedLineLength,
+        const RealArray& video,
+        float syncThreshold);
+    
+    /**
+     * Compute line locations using Python's algorithm:
+     * Assigns pulses to line numbers, keeps actual positions, fills gaps
+     * @param pulses Vector of detected sync pulses
+     * @param line0loc Sample position of line 0 (field start)
+     * @param meanLineLength Mean line length in samples
+     * @param numLines Number of lines in field
+     * @param video Video signal for refinement
+     * @param syncThreshold Sync detection threshold
+     * @return Map of line number to actual pulse position (with gaps filled)
+     */
+    std::map<int, double> computeLineLocsDict(
+        const std::vector<Pulse>& pulses,
+        double line0loc,
+        double meanLineLength,
+        int numLines,
         const RealArray& video,
         float syncThreshold);
     
