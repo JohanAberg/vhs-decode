@@ -14,6 +14,7 @@
 #include "vhsdecode/hilbert.hpp"
 #include "vhsdecode/rf_processor.hpp"
 #include "vhsdecode/sync_detector.hpp"
+#include "vhsdecode/tbc_scaler.hpp"
 #include "formats/format_base.hpp"
 #include "formats/vhs_format.hpp"
 
@@ -32,6 +33,7 @@ void printUsage(const char* progName) {
     std::cout << "  --system <system>     TV system (NTSC, PAL, PAL-M) [default: NTSC]\n";
     std::cout << "  --threads <n>         Number of threads [default: 4]\n";
     std::cout << "  --length <n>          Number of frames to process (0 = all) [default: 0]\n";
+    std::cout << "  --seek <n>            Skip to byte offset in input file [default: 0]\n";
     std::cout << "  --gpu                 Enable GPU acceleration\n";
     std::cout << "  --use-prototype-fft   Use prototype FFT (slower, for testing)\n";
     std::cout << "  --help                Show this help message\n";
@@ -45,6 +47,7 @@ int main(int argc, char* argv[]) {
     std::string systemName = "NTSC";
     int threads = 4;
     int lengthFrames = 0;  // 0 = process all frames
+    size_t seekOffset = 0;  // Byte offset to start decoding from
     bool useGPU = false;
     bool usePrototypeFFT = false;
     std::string inputFile;
@@ -69,6 +72,9 @@ int main(int argc, char* argv[]) {
         }
         else if (arg == "--length" && i + 1 < argc) {
             lengthFrames = std::stoi(argv[++i]);
+        }
+        else if (arg == "--seek" && i + 1 < argc) {
+            seekOffset = std::stoull(argv[++i]);
         }
         else if (arg == "--gpu") {
             useGPU = true;
@@ -108,6 +114,7 @@ int main(int argc, char* argv[]) {
         std::cout << "System:  " << systemToString(system) << "\n";
         std::cout << "Threads: " << threads << "\n";
         std::cout << "Length:  " << (lengthFrames > 0 ? std::to_string(lengthFrames) + " frames" : "all") << "\n";
+        std::cout << "Seek:    " << seekOffset << " bytes\n";
         std::cout << "GPU:     " << (useGPU ? "Enabled" : "Disabled") << "\n";
         std::cout << "Input:   " << inputFile << "\n";
         std::cout << "Output:  " << outputFile << "\n";
@@ -369,36 +376,60 @@ int main(int argc, char* argv[]) {
             std::cout << "FULL FILE DECODE: Processing All Blocks\n";
             std::cout << std::string(60, '=') << "\n";
             
-            // Compute line length at output sample rate
-            // PAL: 64µs * 40 MHz = 2560 samples
-            // NTSC: 63.556µs * 40 MHz = 2542 samples
+            // Compute line lengths
+            // PAL: 64µs line period
+            // NTSC: 63.556µs line period
             double linePeriodUS = (config.system.system == TVSystem::PAL) ? 64.0 : 63.556;
-            size_t outputLineLen = static_cast<size_t>(linePeriodUS * config.inputFreqMHz);
             
-            // Setup video parameters for metadata
+            // Input line length at RF sample rate (40 MHz)
+            size_t inputLineLen = static_cast<size_t>(linePeriodUS * config.inputFreqMHz);
+            
+            // Output line length at 4×fsc sample rate
+            // PAL: 4 × 4.43361875 MHz × 64µs = 1135 samples
+            // NTSC: 4 × 3.579545 MHz × 63.556µs = 910 samples
+            double fscMHz = (config.system.system == TVSystem::PAL) ? 4.43361875 : 3.579545;
+            size_t outputLineLen = static_cast<size_t>(4.0 * fscMHz * linePeriodUS);
+            double outputSampleRate = 4.0 * fscMHz * 1e6;  // 17.734475 MHz for PAL
+            
+            // Setup TBC scaler
+            tbc::TBCScaler::Config tbcConfig;
+            tbcConfig.inputSampleRateMHz = config.inputFreqMHz;
+            tbcConfig.linePeriodUS = linePeriodUS;
+            tbcConfig.outputLineLength = static_cast<int>(outputLineLen);
+            tbcConfig.outputSampleRateMHz = 4.0 * fscMHz;
+            tbc::TBCScaler tbcScaler(tbcConfig);
+            
+            // Setup video parameters for metadata (output format)
             VideoParameters videoParams;
             videoParams.system = systemToString(config.system.system);
             videoParams.tapeFormat = "VHS";
-            videoParams.fieldWidth = outputLineLen;  // Raw sample rate line length
+            videoParams.fieldWidth = outputLineLen;  // TBC output line length
             videoParams.fieldHeight = config.system.fieldLines[0];
-            videoParams.sampleRate = config.inputFreqMHz * 1e6;
+            videoParams.sampleRate = outputSampleRate;
             videoParams.numberOfSequentialFields = 0; // Will update as we write
             writer.setVideoParameters(videoParams);
             
             // Calculate total blocks to process
+            // Account for seek offset
+            size_t startBlock = seekOffset / config.blockSize;
             size_t totalBlocks = (reader.getFileSize() + config.blockSize - 1) / config.blockSize;
-            // samplesPerLine is already computed as outputLineLen above
-            size_t samplesPerLine = outputLineLen;
+            size_t blocksToProcess = totalBlocks - startBlock;
+            // samplesPerLine at input rate for accumulation
+            size_t samplesPerLine = inputLineLen;
             size_t samplesPerField = samplesPerLine * config.system.fieldLines[0];
             
             std::cout << "\nProcessing parameters:\n";
             std::cout << "  Total file size: " << reader.getFileSize() << " bytes\n";
             std::cout << "  Block size: " << config.blockSize << " samples\n";
             std::cout << "  Total blocks: " << totalBlocks << "\n";
+            if (seekOffset > 0) {
+                std::cout << "  Seek offset: " << seekOffset << " bytes (starting at block " << startBlock << ")\n";
+            }
             std::cout << "  Line period: " << linePeriodUS << " µs\n";
-            std::cout << "  Samples per line: " << samplesPerLine << " (at " << config.inputFreqMHz << " MHz)\n";
-            std::cout << "  Samples per field: " << samplesPerField << "\n";
-            std::cout << "  Expected fields: ~" << (reader.getFileSize() / samplesPerField) << "\n\n";
+            std::cout << "  Input samples per line: " << inputLineLen << " (at " << config.inputFreqMHz << " MHz)\n";
+            std::cout << "  Output samples per line: " << outputLineLen << " (at " << (4.0 * fscMHz) << " MHz)\n";
+            std::cout << "  Samples per field (input): " << samplesPerField << "\n";
+            std::cout << "  Expected fields: ~" << ((reader.getFileSize() - seekOffset) / samplesPerField) << "\n\n";
             
             // Process blocks and assemble fields
             std::vector<uint16_t> videoBuffer;
@@ -418,9 +449,10 @@ int main(int argc, char* argv[]) {
             syncConfig.linesPerField = config.system.fieldLines[0];
             sync::SyncDetector syncDetector(syncConfig);
             
-            // Sync threshold in digital units (sync at -40 IRE = ~-40 * 437.76 + 16384 ≈ -1127)
-            // Actually sync tip is below blanking, so threshold should be around 10000-12000
-            float syncThresholdDigital = 12000.0f;  // Below blanking level (16384)
+            // Sync threshold in digital units
+            // With new scaling: sync tip (-40 IRE) = 256, black (0 IRE) = 15616
+            // Threshold should be between sync and blanking, around 8000
+            float syncThresholdDigital = 8000.0f;  // Between sync (256) and blanking (15616)
             float expectedLineLen = static_cast<float>(syncConfig.samplesPerLine());
             bool useSyncDetection = true;
             
@@ -432,7 +464,8 @@ int main(int argc, char* argv[]) {
             std::cout << "Decoding: [";
             std::cout.flush();
             
-            for (size_t blockNum = 0; blockNum < totalBlocks; ++blockNum) {
+            size_t processedBlocks = 0;
+            for (size_t blockNum = startBlock; blockNum < totalBlocks; ++blockNum) {
                 // Read RF block
                 auto rfBlock = reader.readBlock(config.blockSize, blockNum);
                 if (rfBlock.data.empty()) break;
@@ -444,7 +477,7 @@ int main(int argc, char* argv[]) {
                 auto fmResult = fmDemod.demodulate(rfResult.analyticSignal);
                 
                 // Debug: print video value range on first block
-                if (blockNum == 0) {
+                if (processedBlocks == 0) {
                     float minVideo = fmResult.video[0];
                     float maxVideo = fmResult.video[0];
                     float sumVideo = 0.0f;
@@ -456,41 +489,48 @@ int main(int argc, char* argv[]) {
                     float avgVideo = sumVideo / fmResult.video.size();
                     std::cout << "\n  Video signal range (first block):\n";
                     std::cout << "    Min: " << std::scientific << minVideo << " Hz";
-                    std::cout << " = " << std::fixed << std::setprecision(1) << ((minVideo - 4085714.0f) / 7142.86f) << " IRE\n";
+                    std::cout << " = " << std::fixed << std::setprecision(1) << ((minVideo - 4100000.0f) / 7000.0f) << " IRE\n";
                     std::cout << "    Max: " << std::scientific << maxVideo << " Hz";
-                    std::cout << " = " << std::fixed << std::setprecision(1) << ((maxVideo - 4085714.0f) / 7142.86f) << " IRE\n";
+                    std::cout << " = " << std::fixed << std::setprecision(1) << ((maxVideo - 4100000.0f) / 7000.0f) << " IRE\n";
                     std::cout << "    Avg: " << std::scientific << avgVideo << " Hz";
-                    std::cout << " = " << std::fixed << std::setprecision(1) << ((avgVideo - 4085714.0f) / 7142.86f) << " IRE\n";
-                    std::cout << "    Expected: sync=" << 3800000.0f << " Hz (-40 IRE), white=4800000 Hz (100 IRE)\n";
+                    std::cout << " = " << std::fixed << std::setprecision(1) << ((avgVideo - 4100000.0f) / 7000.0f) << " IRE\n";
+                    std::cout << "    Expected: sync=" << 3800000.0f << " Hz (-42.9 IRE), white=4800000 Hz (100 IRE)\n";
                 }
                 
                 // Convert video to 16-bit and add to buffer
                 // FM demodulator outputs frequency in Hz
                 // 
-                // VHS PAL frequency mapping (from vhs-decode Python code):
-                //   vsync_ire = -40 IRE
-                //   hz_ire = 1e6 / (100 + 40) = 7142.86 Hz per IRE
-                //   ire0 = 4.8 MHz - (hz_ire * 100) = 4.085714 MHz  (black level, 0 IRE)
-                //   sync tip (-40 IRE) = 4.085714 - 0.285714 = 3.8 MHz
+                // VHS PAL frequency mapping (from vhsdecode/format_defs/vhs.py):
+                //   vsync_ire = -0.3 * (100 / 0.7) = -42.857 IRE
+                //   hz_ire = 1e6 / (100 + 42.857) = 7000 Hz per IRE
+                //   ire0 = 4.8 MHz - (hz_ire * 100) = 4.1 MHz  (black level, 0 IRE)
+                //   sync tip (-42.857 IRE) = 4.1 - 0.3 = 3.8 MHz
                 //   peak white (100 IRE) = 4.8 MHz
                 //
-                // Scale from FM frequency to IRE levels (0-65535 where blanking ~= 16384)
-                float ire0Hz = 4085714.0f;       // 0 IRE (black level) in Hz
-                float hzPerIre = 7142.86f;       // Hz per IRE
-                float syncTipIre = -40.0f;       // Sync tip in IRE
-                
-                // IRE 0 maps to ~16384 (blanking), IRE 100 maps to ~60160 (white)
-                // Using standard 16-bit IRE scale: 0 IRE = 16384, 100 IRE = 60160
-                float ire0Digital = 16384.0f;
-                float digitalPerIre = (60160.0f - 16384.0f) / 100.0f;  // ~437.76
+                // Python PAL output scaling (from lddecode/core.py FieldPAL):
+                //   outputZero = 256 (value at vsync tip)
+                //   out_scale = (0xD300 - 0x0100) / (100 - vsync_ire) = 53760 / 142.857 = 376.32
+                //   output = (ire - vsync_ire) * out_scale + outputZero
+                //
+                // Expected TBC values:
+                //   -42.857 IRE (sync) -> 256
+                //   0 IRE (black) -> 16384
+                //   100 IRE (white) -> 54016
+                //
+                float ire0Hz = 4100000.0f;       // 0 IRE (black level) in Hz (4.1 MHz)
+                float hzPerIre = 7000.0f;        // Hz per IRE
+                float vsyncIre = -42.857f;       // Sync tip in IRE (PAL standard)
+                float outputZero = 256.0f;       // Digital value at sync tip
+                float outScale = 53760.0f / 142.857f;  // = 376.32 digital per IRE
                 
                 for (size_t i = 0; i < fmResult.video.size(); ++i) {
                     // Convert frequency to IRE: IRE = (freq - ire0) / hzPerIre
                     float freqHz = fmResult.video[i];
                     float ire = (freqHz - ire0Hz) / hzPerIre;
                     
-                    // Convert IRE to 16-bit digital: 0 IRE = 16384, 100 IRE = 60160
-                    float digital = ire0Digital + (ire * digitalPerIre);
+                    // Convert IRE to 16-bit using Python's formula:
+                    // output = (ire - vsync_ire) * out_scale + outputZero
+                    float digital = (ire - vsyncIre) * outScale + outputZero;
                     digital = std::max(0.0f, std::min(65535.0f, digital));
                     videoBuffer.push_back(static_cast<uint16_t>(digital));
                     videoFloatBuffer.push_back(digital);  // Keep float copy for sync detection
@@ -501,7 +541,7 @@ int main(int argc, char* argv[]) {
                     // Chroma uses same frequency-to-IRE scaling for now
                     float freqHz = fmResult.chroma[i];
                     float ire = (freqHz - ire0Hz) / hzPerIre;
-                    float digital = ire0Digital + (ire * digitalPerIre);
+                    float digital = (ire - vsyncIre) * outScale + outputZero;
                     digital = std::max(0.0f, std::min(65535.0f, digital));
                     chromaBuffer.push_back(static_cast<uint16_t>(digital));
                 }
@@ -571,58 +611,61 @@ int main(int argc, char* argv[]) {
                         }
                     }
                     
-                    // Extract video field using detected or fixed line starts
+                    // Scale video field using TBC scaler (bicubic interpolation)
+                    // This converts from input rate (2560 samples/line) to output rate (1135 samples/line)
+                    size_t numLines = std::min(lineStarts.size(), 
+                                               static_cast<size_t>(config.system.fieldLines[fieldCount % 2]));
+                    
+                    // Create RealArray from float buffer for scaling
+                    RealArray videoForScaling(videoFloatBuffer.begin(), 
+                                              videoFloatBuffer.begin() + std::min(videoFloatBuffer.size(), samplesNeeded + inputLineLen));
+                    
+                    // Scale the field using TBC scaler
+                    auto scaledLines = tbcScaler.scaleField(videoForScaling, lineStarts, numLines);
+                    
+                    // Convert scaled lines to VideoField (uint16_t)
                     VideoField field;
                     size_t samplesConsumed = 0;
                     
-                    for (size_t lineIdx = 0; lineIdx < std::min(lineStarts.size(), 
-                            static_cast<size_t>(config.system.fieldLines[fieldCount % 2])); ++lineIdx) {
-                        VideoLine videoLine(samplesPerLine);
-                        size_t lineStart = lineStarts[lineIdx];
+                    for (size_t lineIdx = 0; lineIdx < scaledLines.size(); ++lineIdx) {
+                        VideoLine videoLine(outputLineLen);
+                        const auto& scaledLine = scaledLines[lineIdx];
                         
-                        for (size_t s = 0; s < samplesPerLine; ++s) {
-                            size_t idx = lineStart + s;
-                            if (idx < videoBuffer.size()) {
-                                videoLine[s] = videoBuffer[idx];
-                            } else {
-                                videoLine[s] = 16384;  // Fill with blanking level if out of range
-                            }
+                        for (size_t s = 0; s < outputLineLen && s < scaledLine.size(); ++s) {
+                            float value = scaledLine[s];
+                            value = std::max(0.0f, std::min(65535.0f, value));
+                            videoLine[s] = static_cast<uint16_t>(value);
                         }
                         field.push_back(videoLine);
                         
-                        // Track the furthest sample consumed
-                        if (lineStart + samplesPerLine > samplesConsumed) {
-                            samplesConsumed = lineStart + samplesPerLine;
+                        // Track samples consumed (at input rate)
+                        if (lineIdx < lineStarts.size()) {
+                            size_t lineEnd = (lineIdx + 1 < lineStarts.size()) 
+                                           ? lineStarts[lineIdx + 1] 
+                                           : lineStarts[lineIdx] + inputLineLen;
+                            if (lineEnd > samplesConsumed) {
+                                samplesConsumed = lineEnd;
+                            }
                         }
                     }
                     
                     // Fill remaining lines if sync didn't find enough
                     while (field.size() < static_cast<size_t>(config.system.fieldLines[fieldCount % 2])) {
-                        VideoLine videoLine(samplesPerLine, 16384);  // Blanking level
+                        VideoLine videoLine(outputLineLen, 16384);  // Blanking level
                         field.push_back(videoLine);
                     }
                     
-                    // Extract chroma field (same line positions as video)
+                    // Extract chroma field (same line positions, scaled to output rate)
+                    // For now, just use mid-level since chroma processing isn't implemented
                     VideoField chromaField;
-                    for (size_t lineIdx = 0; lineIdx < std::min(lineStarts.size(),
-                            static_cast<size_t>(config.system.fieldLines[fieldCount % 2])); ++lineIdx) {
-                        VideoLine chromaLine(samplesPerLine);
-                        size_t lineStart = lineStarts[lineIdx];
-                        
-                        for (size_t s = 0; s < samplesPerLine; ++s) {
-                            size_t idx = lineStart + s;
-                            if (idx < chromaBuffer.size()) {
-                                chromaLine[s] = chromaBuffer[idx];
-                            } else {
-                                chromaLine[s] = 32768;  // Mid-level for chroma
-                            }
-                        }
+                    for (size_t lineIdx = 0; lineIdx < numLines; ++lineIdx) {
+                        VideoLine chromaLine(outputLineLen, 32768);  // Mid-level for chroma
                         chromaField.push_back(chromaLine);
                     }
                     
                     // Fill remaining chroma lines if needed
                     while (chromaField.size() < static_cast<size_t>(config.system.fieldLines[fieldCount % 2])) {
-                        VideoLine chromaLine(samplesPerLine, 32768);
+                        VideoLine chromaLine(outputLineLen, 32768);
                         chromaField.push_back(chromaLine);
                     }
                     
@@ -639,7 +682,9 @@ int main(int argc, char* argv[]) {
                     fieldMeta.seqNo = fieldCount + 1;
                     fieldMeta.isFirstField = (fieldCount % 2 == 0);
                     fieldMeta.lineCount = field.size();
-                    fieldMeta.fileLoc = fieldCount * samplesPerField * 2; // Byte location
+                    // Output field size: outputLineLen * lineCount * 2 bytes per sample
+                    size_t outputFieldSize = outputLineLen * field.size() * 2;
+                    fieldMeta.fileLoc = fieldCount * outputFieldSize;
                     fieldMeta.diskLoc = static_cast<double>(fieldCount) + 1.4;
                     fieldMeta.syncConf = 100;
                     fieldMeta.fieldPhaseID = 1;
@@ -663,8 +708,10 @@ int main(int argc, char* argv[]) {
                     videoFloatBuffer.erase(videoFloatBuffer.begin(), videoFloatBuffer.begin() + samplesToRemove);
                 }
                 
+                processedBlocks++;
+                
                 // Progress indicator
-                size_t progressPercent = (blockNum * 100) / totalBlocks;
+                size_t progressPercent = (processedBlocks * 100) / blocksToProcess;
                 if (progressPercent != lastProgressPercent && progressPercent % 5 == 0) {
                     std::cout << "=" << std::flush;
                     lastProgressPercent = progressPercent;

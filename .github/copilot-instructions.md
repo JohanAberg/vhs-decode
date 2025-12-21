@@ -400,7 +400,22 @@ filtered = signal.sosfiltfilt(sos_filter, data)  # CPU only for now
 
 Following these guidelines ensures both GPU acceleration and general development are correct, fast, and maintainable.
 
-## C++ Prototype (Dec 21, 2025)
+## Documentation Maintenance Rules
+
+**ALWAYS keep documentation files up to date when making changes:**
+1. **After modifying C++ prototype:** Update `cpp-prototype/CPP_PROTOTYPE_STATUS.md`
+2. **After modifying Python GPU code:** Update `GPU_PERFORMANCE_ANALYSIS.md` and `docs/GPU_USAGE.md`
+3. **After fixing bugs:** Document in relevant `*_BUG_FIX_SUMMARY.md` files
+4. **After adding features:** Update this file (`copilot-instructions.md`) with new parameters/patterns
+5. **After performance changes:** Update benchmark results in `scaling_benchmark_results.json`
+
+**Key documentation files to maintain:**
+- `.github/copilot-instructions.md` - This file, master AI guide
+- `cpp-prototype/CPP_PROTOTYPE_STATUS.md` - C++ implementation status and comparison with Python
+- `docs/DECODER_USAGE.md` - User-facing decoder documentation
+- `docs/GPU_USAGE.md` - GPU-specific usage guide
+
+## C++ Prototype (Updated Dec 21, 2025)
 
 The `cpp-prototype/` directory contains a C++ implementation of the VHS RF decoder,
 designed for GPU acceleration via OpenCL.
@@ -416,6 +431,9 @@ cmake --build . --parallel 8
 
 # Run decode
 ./src/vhs-decode --system PAL --length 10 input.u8 output
+
+# Run decode aligned with Python (use --seek with Python's first field fileLoc)
+./src/vhs-decode --system PAL --length 3 --seek 983040 input.u8 output
 ```
 
 ### Working Components
@@ -424,51 +442,80 @@ cmake --build . --parallel 8
 - **Filter Bank:** Frequency-domain bandpass/lowpass/highpass filters
 - **Hilbert Transform:** Analytic signal generation
 - **FM Demodulator:** Phase extraction and frequency scaling
-- **Video Scaling:** VHS PAL frequency-to-IRE mapping
-- **TBC Writer:** .tbc and .tbc.json output
+- **TBC Scaler:** Bicubic interpolation resampling 2560→1135 samples/line
+- **Sync Detection:** Horizontal sync pulse detection
+- **TBC Writer:** .tbc and .tbc.json output at 17.734475 MHz (4×fsc)
 
-### VHS PAL Parameters (from vhsdecode/format_defs/vhs.py)
+### VHS PAL Parameters (CORRECTED - from vhsdecode/format_defs/vhs.py)
 ```cpp
 // RF Bandpass: 1.3 - 5.78 MHz
 rfConfig.rfBandpassLowMHz = 1.3;
 rfConfig.rfBandpassHighMHz = 5.78;
 
-// Frequency to IRE mapping
-float ire0Hz = 4085714.0f;       // 0 IRE (black level)
-float hzPerIre = 7142.86f;       // Hz per IRE
-// Sync tip (-40 IRE) at 3.8 MHz
+// Frequency to IRE mapping (CORRECT values from Python)
+float ire0Hz = 4100000.0f;       // 0 IRE (black level) - 4.1 MHz
+float hzPerIre = 7000.0f;        // Hz per IRE
+float vsyncIre = -42.857f;       // Sync tip in IRE (PAL standard)
+// Sync tip (-42.857 IRE) at 3.8 MHz
 // Peak white (100 IRE) at 4.8 MHz
 
-// Digital scaling
-float ire0Digital = 16384.0f;    // 0 IRE in 16-bit
-float digitalPerIre = 437.76f;   // ~(60160-16384)/100
+// Digital scaling (from lddecode/core.py FieldPAL)
+float outputZero = 256.0f;       // Digital value at sync tip
+float outScale = 53760.0f / 142.857f;  // = 376.32
+// Formula: output = (ire - vsync_ire) * out_scale + outputZero
+// -42.857 IRE → 256, 0 IRE → 16384, 100 IRE → 54016
+
+// TBC output format
+size_t outputLineLen = 1135;     // 4 × 4.43361875 MHz × 64µs
+double outputSampleRate = 17734475.0;  // 4×fsc for PAL
 ```
 
-### Missing Components (TODO)
-- **Horizontal sync detection** - Lines not aligned yet
-- **Time-base correction** - No wow/flutter compensation
-- **Vertical sync detection** - Field boundaries not detected
-- **Dropout detection** - Not implemented
-- **Chroma processing** - Currently copies luma
+### C++ vs Python Comparison (Dec 21, 2025)
+| Metric | Python | C++ | Status |
+|--------|--------|-----|--------|
+| Output line length | 1135 | 1135 | ✓ Match |
+| Output sample rate | 17.734475 MHz | 17.734475 MHz | ✓ Match |
+| Mean digital value | ~19857 | ~19196 | Close |
+| Field correlation | - | 0.37-0.46 | Low - needs vertical sync |
+
+**Why correlation is low:**
+1. No vertical sync detection - C++ doesn't find proper field boundaries
+2. Line offset (~16-30 lines) due to different field start detection
+3. No sub-sample line interpolation (Python uses linelocs)
+
+### Missing Components (TODO - Priority Order)
+1. **Vertical sync detection** (HIGH) - Field boundaries not detected, main cause of low correlation
+2. **Sub-sample line positioning** - Python uses linelocs interpolation
+3. **Signal enhancement** - High-frequency boost, spike replacement
+4. **Dropout detection** - Not implemented
+5. **Chroma processing** - Currently copies luma
 
 ### Key Files
-- `cpp-prototype/src/core/main.cpp` - Entry point
+- `cpp-prototype/src/core/main.cpp` - Entry point with --seek option
 - `cpp-prototype/src/rf/rf_processor.cpp` - RF pipeline
 - `cpp-prototype/src/demod/fm_demodulator.cpp` - FM demodulation
-- `cpp-prototype/CPP_PROTOTYPE_STATUS.md` - Detailed status
+- `cpp-prototype/src/tbc/tbc_scaler.cpp` - TBC resampling (NEW)
+- `cpp-prototype/src/sync/sync_detector.cpp` - Horizontal sync detection
+- `cpp-prototype/CPP_PROTOTYPE_STATUS.md` - Detailed status and comparison
 
 ### Testing C++ Output
 ```bash
-# Compare with Python decoder
-python decode.py vhs --system PAL --length 5 input.u8 python_output
+# Decode with Python first
+python decode.py vhs --system PAL --length 3 input.u8 python_output
 
-# Extract field as image for visual inspection
+# Get Python's starting position
+python -c "import json; print(json.load(open('python_output.tbc.json'))['fields'][0]['fileLoc'])"
+
+# Decode with C++ at same position
+./src/vhs-decode --system PAL --length 3 --seek <fileLoc> input.u8 cpp_output
+
+# Compare correlation
 python3 << 'EOF'
 import numpy as np
-from PIL import Image
-data = np.fromfile('test_output.tbc', dtype=np.uint16)[:1135*312]
-img = ((data.reshape(312, 1135) / 65535) * 255).astype(np.uint8)
-Image.fromarray(img).save('field1.png')
+py = np.fromfile('python_output.tbc', dtype=np.uint16)[:1135*312]
+cpp = np.fromfile('cpp_output.tbc', dtype=np.uint16)[:1135*312]
+corr = np.corrcoef(py, cpp)[0,1]
+print(f"Correlation: {corr:.4f}")
 EOF
 ```
 
@@ -477,3 +524,5 @@ EOF
 - Match Python filter parameters from `vhsdecode/format_defs/vhs.py`
 - Keep CPU fallback for all GPU operations
 - Test against Python decoder output for validation
+- **Always update CPP_PROTOTYPE_STATUS.md after changes**
+
