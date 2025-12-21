@@ -1,5 +1,5 @@
-# Source files
-set(SOURCES
+# Decoder library source files (without main.cpp)
+set(LIB_SOURCES
     formats/format_base.cpp
     formats/vhs_format.cpp
     io/rf_reader.cpp
@@ -15,7 +15,6 @@ set(SOURCES
     video/dropout_corrector.cpp
     video/tbc_corrector.cpp
     core/block_processor.cpp
-    core/main.cpp
 )
 
 # Add FFTW3-dependent sources if available
@@ -23,7 +22,7 @@ set(SOURCES
 # The main decoder (fft_engine.cpp) already uses FFTW3 when available
 if(USE_FFTW3 AND FFTW3_FOUND)
     # Uncomment when these files are ready:
-    # list(APPEND SOURCES 
+    # list(APPEND LIB_SOURCES 
     #     rf/fftw_engine.cpp
     #     video/chroma_separator.cpp
     #     video/video_processor.cpp
@@ -32,7 +31,7 @@ endif()
 
 # Add OpenCL sources if available
 if(ENABLE_GPU AND OpenCL_FOUND)
-    list(APPEND SOURCES 
+    list(APPEND LIB_SOURCES 
         gpu/opencl_context.cpp
         gpu/opencl_buffer.cpp
         gpu/kernel_loader.cpp
@@ -44,32 +43,38 @@ endif()
 
 # Add clFFT sources if available
 if(USE_CLFFT AND clFFT_FOUND)
-    list(APPEND SOURCES gpu/clfft_engine.cpp)
+    list(APPEND LIB_SOURCES gpu/clfft_engine.cpp)
 endif()
 
-# Create executable
-add_executable(vhs-decode-cpp ${SOURCES})
+# Create decoder library
+add_library(vhsdecode-lib STATIC ${LIB_SOURCES})
 
-# Link libraries
-target_link_libraries(vhs-decode-cpp
-    PRIVATE
+# Link libraries to decoder lib
+target_link_libraries(vhsdecode-lib
+    PUBLIC
         Threads::Threads
 )
 
 # Link FFTW3 if available
 if(USE_FFTW3 AND FFTW3_FOUND)
-    target_link_libraries(vhs-decode-cpp PRIVATE ${FFTW3_LIBRARIES})
+    target_link_libraries(vhsdecode-lib PUBLIC ${FFTW3_LIBRARIES})
 endif()
 
 # Link OpenCL if available
 if(ENABLE_GPU AND OpenCL_FOUND)
-    target_link_libraries(vhs-decode-cpp PRIVATE OpenCL::OpenCL)
+    target_link_libraries(vhsdecode-lib PUBLIC OpenCL::OpenCL)
 endif()
 
 # Link clFFT if available
 if(USE_CLFFT AND clFFT_FOUND)
-    target_link_libraries(vhs-decode-cpp PRIVATE clFFT::clFFT)
+    target_link_libraries(vhsdecode-lib PUBLIC clFFT::clFFT)
 endif()
+
+# Create CLI executable
+add_executable(vhs-decode-cpp core/main.cpp)
+
+# Link decoder library to CLI
+target_link_libraries(vhs-decode-cpp PRIVATE vhsdecode-lib)
 
 # Set properties
 set_target_properties(vhs-decode-cpp PROPERTIES
