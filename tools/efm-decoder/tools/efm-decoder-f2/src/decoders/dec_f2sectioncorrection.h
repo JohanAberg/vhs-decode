@@ -37,8 +37,9 @@ public:
     void pushSection(const F2Section &data);
     F2Section popSection();
     bool isReady() const;
+    bool isValid() const;
     void flush();
-
+    void setNoTimecodes(bool noTimecodes);
     void showStatistics() const;
 
 private:
@@ -60,8 +61,8 @@ private:
     bool m_leadinComplete;
 
     QQueue<F2Section> m_window;
-    quint32 m_maximumGapSize;
-    quint32 m_paddingWatermark;
+    qint32 m_maximumGapSize;
+    qint32 m_paddingWatermark;
 
     // Statistics
     quint32 m_totalSections;
@@ -83,6 +84,9 @@ private:
     QVector<quint8> m_trackNumbers;
     QVector<SectionTime> m_trackStartTimes;
     QVector<SectionTime> m_trackEndTimes;
+
+    // Timecode handling
+    bool m_noTimecodes;
 };
 
 #endif // DEC_F2SECTIONCORRECTION_H

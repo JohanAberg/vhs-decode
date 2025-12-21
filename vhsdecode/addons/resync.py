@@ -9,6 +9,8 @@ import math
 import hashlib
 from numba import njit
 
+# from vhsd_rust import fallback_vsync_loc_means as fallback_vsync_loc_means_r
+
 
 @njit(cache=True, nogil=True)
 def iretohz(sysparams, ire):
@@ -402,6 +404,14 @@ class Resync:
         vsync_locs, vsync_means = _fallback_vsync_loc_means(
             field.data["video"]["demod_05"], pulses, field.rf.freq, min_len, max_len
         )
+
+        # vsync_locs_2, vsync_means_2 = fallback_vsync_loc_means_r(
+        #    field.data["video"]["demod_05"], pulses, field.rf.freq, min_len, max_len
+        # )
+
+        # print(vsync_means)
+        # print(vsync_means_2)
+        # assert np.isclose(vsync_means, vsync_means_2).all()
 
         if len(vsync_means) == 0:
             synclevel = self._field_state.pull_sync_level()

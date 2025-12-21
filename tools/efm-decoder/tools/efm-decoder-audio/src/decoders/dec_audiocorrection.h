@@ -35,8 +35,9 @@ public:
     void pushSection(const AudioSection &audioSection);
     AudioSection popSection();
     bool isReady() const;
+    void flush();
 
-    void showStatistics();
+    void showStatistics() const;
 
 private:
     void processQueue();

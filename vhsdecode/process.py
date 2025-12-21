@@ -3,6 +3,7 @@ import time
 import numpy as np
 import traceback
 import scipy.signal as sps
+import threading
 from collections import namedtuple
 
 import lddecode.core as ldd
@@ -41,9 +42,11 @@ from vhsdecode.compute_video_filters import (
     gen_bpf_supergauss,
     gen_fm_audio_notch_params,
     NONLINEAR_AMP_LPF_FREQ_DEFAULT,
+    CHROMA_AUDIO_NOTCH_Q,
 )
 from vhsdecode import compute_video_filters as cvf
 from vhsdecode.demodcache import DemodCacheTape
+from vhsdecode.rust_utils import sosfiltfilt_rust
 
 
 def is_secam(system: str):
@@ -87,6 +90,7 @@ class VHSDecode(ldd.LDdecode):
         rf_options={},
         extra_options={},
         debug_plot=None,
+        field_order_action="detect",
     ):
 
         # monkey patch init with a dummy to prevent calling set_start_method twice on macos
@@ -121,38 +125,20 @@ class VHSDecode(ldd.LDdecode):
             # We need a larger buffer for 819-line input
             # TODO: Is this useful for normal formats too?
             self.readlen = self.rf.linelen * 500
+        # else:
+        #    self.readlen = int(self.readlen * 1.1)
 
         # Adjustment for output to avoid clipping.
         self.level_adjust = level_adjust
-        
-        # Check if GPU acceleration is requested
-        use_gpu = extra_options.get("use_gpu", False)
-        gpu_id = extra_options.get("gpu_id", 0)
-        optimize_transfers = extra_options.get("optimize_transfers", True)
-        
-        # Overwrite the rf with the VHS-altered one (GPU or CPU)
-        if use_gpu:
-            from vhsdecode.process_gpu import VHSRFDecodeGPU
-            self.rf = VHSRFDecodeGPU(
-                system=system,
-                tape_format=tape_format,
-                inputfreq=inputfreq,
-                rf_options=rf_options,
-                extra_options=extra_options,
-                debug_plot=debug_plot,
-                use_gpu=True,
-                gpu_id=gpu_id,
-                optimize_transfers=optimize_transfers,
-            )
-        else:
-            self.rf = VHSRFDecode(
-                system=system,
-                tape_format=tape_format,
-                inputfreq=inputfreq,
-                rf_options=rf_options,
-                extra_options=extra_options,
-                debug_plot=debug_plot,
-            )
+        # Overwrite the rf  with the VHS-altered one
+        self.rf = VHSRFDecode(
+            system=system,
+            tape_format=tape_format,
+            inputfreq=inputfreq,
+            rf_options=rf_options,
+            extra_options=extra_options,
+            debug_plot=debug_plot,
+        )
 
         if system == "405":
             SysParams_PAL = sys_params_pal_temp
@@ -165,32 +151,13 @@ class VHSDecode(ldd.LDdecode):
         # Restore init functino now that superclass constructor is finished.
         ldd.DemodCache.__init__ = temp_init
 
-        # Async I/O wrapper
-        # Enable by default if not explicitly disabled
-        if extra_options.get("async_io", True):
-            from vhsdecode.async_loader import AsyncLoader
-            # Calculate blocksize as DemodCache does
-            blocksize = self.rf.blocklen - (self.rf.blockcut + self.rf.blockcut_end)
-            # Increase queue size to support larger prefetch
-            self.freader = AsyncLoader(self.freader, self.infile, blocksize, self.rf.blocklen, queue_size=128)
-
-        # Increase cache size for GPU to allow more prefetching
-        cachesize = 256
-        if use_gpu:
-            cachesize = 1024
-
         self.demodcache = DemodCacheTape(
             self.rf,
             self.infile,
             self.freader,
             self.rf_opts,
             num_worker_threads=self.numthreads,
-            cachesize=cachesize,
         )
-
-        # Inject cache into GPU decoder for internal batching
-        if use_gpu and hasattr(self.rf, "set_cache"):
-            self.rf.set_cache(self.demodcache)
 
         if fname_out is not None and self.rf.options.write_chroma:
             self.outfile_chroma = open(fname_out + "_chroma.tbc", "wb")
@@ -198,6 +165,11 @@ class VHSDecode(ldd.LDdecode):
             self.outfile_chroma = None
 
         self.debug_plot = debug_plot
+        self.field_order_action = field_order_action
+        if tape_format == "TYPEC":
+            # Since typec usually lacks vsync set this to none to avoid dropping fields.
+            self.field_order_action = "none"
+        self.duplicate_prev_field = True
 
         # Needs to be overridden since this is overwritten for 405-line.
         # self.output_lines = (self.rf.SysParams["frame_lines"] // 2) + 1
@@ -222,8 +194,9 @@ class VHSDecode(ldd.LDdecode):
         return 20 * np.log10(signal / noise)
 
     def buildmetadata(self, f, check_phase=False):
-        """returns field information JSON and whether or not a backfill field is needed"""
-        prevfi = self.fieldinfo[-1] if len(self.fieldinfo) else None
+        """returns field information JSON and whether to duplicate or drop the field"""
+        prevfi_1 = self.fieldinfo[-1] if len(self.fieldinfo) else None
+        prevfi_2 = self.fieldinfo[-2] if len(self.fieldinfo) > 1 else None
 
         # Not calulated and used for tapes at the moment
         # bust_median = lddu.roundfloat(np.nan_to_num(f.burstmedian)) #lddu.roundfloat(f.burstmedian if not math.isnan(f.burstmedian) else 0.0)
@@ -231,12 +204,15 @@ class VHSDecode(ldd.LDdecode):
 
         fi = {
             "isFirstField": True if f.isFirstField else False,
+            "detectedFirstField": True if f.isFirstField else False,
+            "isDuplicateField": False,
             "syncConf": f.compute_syncconf(),
             "seqNo": len(self.fieldinfo) + 1,
             "diskLoc": np.round((f.readloc / self.bytes_per_field) * 10) / 10,
             "fileLoc": int(np.floor(f.readloc)),
             "fieldPhaseID": f.fieldPhaseID,
         }
+        write_field = True
 
         if self.doDOD:
             dropout_lines, dropout_starts, dropout_ends = f.dropout_detect()
@@ -248,28 +224,80 @@ class VHSDecode(ldd.LDdecode):
                 }
 
         # This is a bitmap, not a counter
-        decodeFaults = 0
+        # docs for this mysterious bitmap???
 
-        if prevfi is not None:
-            if prevfi["isFirstField"] == fi["isFirstField"]:
-                # logger.info('WARNING!  isFirstField stuck between fields')
-                if lddu.inrange(fi["diskLoc"] - prevfi["diskLoc"], 0.95, 1.05):
-                    decodeFaults |= 1
-                    fi["isFirstField"] = not prevfi["isFirstField"]
-                    fi["syncConf"] = 10
-                else:
-                    # TODO: Do we want to handle this differently?
-                    # Also check if this is done properly by calling function
-                    # Not sure if it is at the moment..
-                    ldd.logger.error(
-                        "Possibly skipped field (Two fields with same isFirstField in a row), writing out an copy of last field to compensate.."
-                    )
-                    decodeFaults |= 4
-                    fi["syncConf"] = 0
-                    return fi, True
-
-        fi["decodeFaults"] = decodeFaults
+        decode_faults = 0
         fi["vitsMetrics"] = self.computeMetrics(self.fieldstack[0], self.fieldstack[1])
+        # interlaced video requires alternating fields, handle cases where fields are repeated
+        #   this can happen due to breaks in recordings between fields, i.e. home recordings, and
+        #   progressive content, such as video game, osd, computer output, etc.
+        if prevfi_1 is not None and prevfi_1["isFirstField"] == fi["isFirstField"]:
+            distance_from_previous_field = fi["diskLoc"] - prevfi_1["diskLoc"]
+            if (
+                # there are three (this one, and two previous) repeating field orders in a row
+                # should be impossible for valid interlaced video, so maybe it's progressive??
+                # progressive examples needed to test this!
+                prevfi_1["detectedFirstField"] == fi["detectedFirstField"]
+                and prevfi_2 is not None
+                and prevfi_2["detectedFirstField"] == prevfi_1["detectedFirstField"]
+                # and this field is within a reasonable distance to be valid
+                and lddu.inrange(distance_from_previous_field, 0.9, 1.1)
+                # Skip on TYPEC since we expect to have missing vsync there and we don't
+                # expect progressive video.
+                and self.rf.options.tape_format != "TYPEC"
+            ):
+                # treat this as progressive, and manually flip the field order
+                ldd.logger.error(
+                    "Detected progressive video content..., manually flipping the field order to compensate"
+                )
+                decode_faults |= 1
+                fi["syncConf"] = 10
+                fi["isFirstField"] = not prevfi_1["isFirstField"]
+            else:
+                if self.field_order_action == "duplicate":
+                    self.duplicate_prev_field = True
+                elif self.field_order_action == "drop":
+                    self.duplicate_prev_field = False
+                elif self.field_order_action == "detect":
+                    # duplicated field order was detected more than 1.1 fields away from the previous field, possibly a gap
+                    if distance_from_previous_field > 1.1:
+                        self.duplicate_prev_field = True
+                    # duplicated field order was detected less than 0.9 fields away from the previous field, probably overlaped end of last field
+                    elif distance_from_previous_field < 0.9:
+                        self.duplicate_prev_field = False
+                    # next field is close enough to be a valid field, duplicating or dropping is valid, alternate to avoid too many duplicates or drops
+                    else:
+                        self.duplicate_prev_field = not self.duplicate_prev_field
+
+                if self.field_order_action == "none":
+                    if self.rf.options.tape_format != "TYPEC":
+                        ldd.logger.error(
+                            "Possibly skipped field (Two fields with same isFirstField in a row), manually flipping the field order to compensate"
+                        )
+                    decode_faults |= 4
+                    fi["syncConf"] = 0
+                    fi["isFirstField"] = not prevfi_1["isFirstField"]
+                elif self.duplicate_prev_field:
+                    ldd.logger.error(
+                        "Possibly skipped field (Two fields with same isFirstField in a row), duplicating the last field to compensate..."
+                    )
+                    decode_faults |= 4
+                    fi["syncConf"] = 0
+                    fi["isDuplicateField"] = True
+                else:
+                    ldd.logger.error(
+                        "Possibly skipped field (Two fields with same isFirstField in a row), dropping the last field to compensate..."
+                    )
+                    decode_faults |= 4
+                    write_field = False
+                    fi["syncConf"] = 0
+
+            if decode_faults != 0:
+                # Only write this if it's anything else than 0, to save a little space in the json,
+                # since it's not used for anything atm anyhow.
+                fi["decodeFaults"] = decode_faults
+
+            return fi, fi["isDuplicateField"], write_field
 
         self.frameNumber = None
         if f.isFirstField:
@@ -297,7 +325,7 @@ class VHSDecode(ldd.LDdecode):
                     ldd.logger.warning("file frame %d : VBI decoding error", rawloc)
                     traceback.print_exc()
 
-        return fi, False
+        return fi, fi["isDuplicateField"], write_field
 
     # Again ignored for tapes
     def checkMTF(self, field, pfield=None):
@@ -352,8 +380,12 @@ class VHSDecode(ldd.LDdecode):
             jout["videoParameters"]["tapeFormat"] = self.rf.options.tape_format
             return jout
         except TypeError as e:
-            traceback.print_exc()
-            print("Cannot build json: %s" % e)
+            if self.rf.debug:
+                traceback.print_exc()
+                ldd.logger.error("Error! Cannot build json: %s" % e)
+            ldd.logger.error(
+                "Error! Something went wrong when decoding or building json!"
+            )
             return None
 
     def readfield(self, initphase=False):
@@ -373,6 +405,9 @@ class VHSDecode(ldd.LDdecode):
             self.fieldstack.pop(-1)
 
         while done is False:
+            if self.second_decode is None and self.fields_written:
+                self.second_decode = time.time()
+
             if redo:
                 # Drop existing thread
                 self.decodethread = None
@@ -380,7 +415,6 @@ class VHSDecode(ldd.LDdecode):
                 f, offset = self.decodefield(
                     redo, self.mtf_level, self.fieldstack[0], initphase, redo
                 )
-
                 # Only allow one redo, no matter what
                 done = True
                 redo = None
@@ -416,12 +450,14 @@ class VHSDecode(ldd.LDdecode):
                 self.threadreturn,
             )
 
-            # THis doesn't actually seem to do anything in the background so disable for now.
-            # if self.numthreads != 0:
-            #    self.decodethread = threading.Thread(target=self.decodefield, args=df_args)
-            #    self.decodethread.start()
-            # else:
-            self.decodefield(*df_args)
+            # decode the next field in a thread so the result is ready for the next iteration
+            if self.numthreads != 0:
+                self.decodethread = threading.Thread(
+                    target=self.decodefield, args=df_args
+                )
+                self.decodethread.start()
+            else:
+                self.decodefield(*df_args)
 
             # process previous run
             if f:
@@ -504,12 +540,12 @@ class VHSDecode(ldd.LDdecode):
             if len(self.fieldinfo) == 0 and not f.isFirstField:
                 return f
 
-            # XXX: this routine currently performs a needed sanity check
-            fi, needFiller = self.buildmetadata(f)
+            fi, duplicateField, writeField = self.buildmetadata(f)
 
-            self.lastvalidfield[f.isFirstField] = (f, fi, picture, audio, efm)
+            if writeField:
+                self.lastvalidfield[f.isFirstField] = (f, fi, picture, audio, efm)
 
-            if needFiller:
+            if duplicateField:
                 if self.lastvalidfield[not f.isFirstField] is not None:
                     self.writeout(self.lastvalidfield[not f.isFirstField])
                     self.writeout(self.lastvalidfield[f.isFirstField])
@@ -517,8 +553,9 @@ class VHSDecode(ldd.LDdecode):
                 # If this is the first field to be written, don't write anything
                 return f
 
-            self.lastFieldWritten = (self.fields_written, f.readloc)
-            self.writeout(self.lastvalidfield[f.isFirstField])
+            if writeField:
+                self.lastFieldWritten = (self.fields_written, f.readloc)
+                self.writeout(self.lastvalidfield[f.isFirstField])
 
         return f
 
@@ -570,6 +607,7 @@ class VHSRFDecode(ldd.RFDecode):
         self._disable_diff_demod = rf_options.get("disable_diff_demod", False)
         self.useAGC = extra_options.get("useAGC", False)
         self.debug = extra_options.get("debug", False)
+
         # Enable cafc for betamax until proper track detection for it is implemented.
         self._do_cafc = (
             True
@@ -641,6 +679,7 @@ class VHSRFDecode(ldd.RFDecode):
                 "disable_right_hsync",
                 "disable_dc_offset",
                 "fallback_vsync",
+                "field_order_confidence",
                 "saved_levels",
                 "y_comb",
                 "write_chroma",
@@ -650,9 +689,11 @@ class VHSRFDecode(ldd.RFDecode):
                 "hsync_refine_use_threshold",
                 "export_raw_tbc",
                 "fm_audio_notch",
+                "chroma_audio_notch",
                 "chroma_offset",
                 "ire0_adjust",
                 "gnrc_afe",
+                "relaxed_line0",
             ],
         )(
             self.iretohz(100) * 2,
@@ -671,6 +712,7 @@ class VHSRFDecode(ldd.RFDecode):
             or tape_format == "EIAJ"
             or system == "405"
             or system == "819",
+            rf_options.get("field_order_confidence", False),
             rf_options.get("saved_levels", False),
             rf_options.get("y_comb", 0) * self.SysParams["hz_ire"],
             write_chroma,
@@ -682,9 +724,11 @@ class VHSRFDecode(ldd.RFDecode):
             True,
             export_raw_tbc,
             rf_options.get("fm_audio_notch", 0),
+            self.DecoderParams.get("chroma_audio_notch_freq", 0) > 0,
             int(self.DecoderParams.get("chroma_offset", 5) * (self.freq / 40.0)),
             ire0_adjust,
             rf_options.get("gnrc_afe", False),
+            rf_options.get("relaxed_line0", False),
         )
 
         # As agc can alter these sysParams values, store a copy to then
@@ -760,26 +804,41 @@ class VHSRFDecode(ldd.RFDecode):
             self.Filters["chroma_deemphasis"] = (b, a)
 
         if self._notch is not None:
-            if not self._do_cafc:
-                self.Filters["FVideoNotch"] = sps.iirnotch(
-                    self._notch / self.freq_half, self._notch_q
-                )
-            else:
+            video_notch_filter = sps.iirnotch(
+                self._notch / self.freq_half, self._notch_q
+            )
+
+            # Chroma notch filter
+            if self._do_cafc:
                 self.Filters["FVideoNotch"] = sps.iirnotch(
                     self._notch / self._chroma_afc.getOutFreqHalf(), self._notch_q
                 )
+            else:
+                self.Filters["FVideoNotch"] = video_notch_filter
 
+            # Luma notch filter
             self.Filters["FVideoNotchF"] = abs(
-                lddu.filtfft(self.Filters["FVideoNotch"], self.blocklen)
+                utils.filtfft(video_notch_filter, self.blocklen)
             )
         else:
             self.Filters["FVideoNotch"] = None, None
 
+        if self._options.chroma_audio_notch:
+            if self._do_cafc:
+                self.Filters["FChromaAudioNotch"] = sps.iirnotch(
+                    DP["chroma_audio_notch_freq"]
+                    / self._chroma_afc.getOutFreqHalf()
+                    * 1e6,
+                    CHROMA_AUDIO_NOTCH_Q,
+                )
+            else:
+                self.Filters["FChromaAudioNotch"] = sps.iirnotch(
+                    DP["chroma_audio_notch_freq"] / (self.freq_hz_half),
+                    CHROMA_AUDIO_NOTCH_Q,
+                )
+
         # The following filters are for post-TBC:
         # The output sample rate is 4fsc
-        out_size = self.SysParams["outlinelen"] * (
-            (self.SysParams["frame_lines"] // 2) + 1
-        )
         self.Filters["FChromaFinal"] = self._chroma_afc.get_chroma_bandpass_final(
             self._options.color_under
         )
@@ -897,10 +956,6 @@ class VHSRFDecode(ldd.RFDecode):
 
         SF["hilbert"] = lddu.build_hilbert(self.blocklen)
 
-        self.Filters["EnvLowPass"] = sps.butter(
-            1, [1.0 / self.freq_half], btype="lowpass"
-        )
-
         if DP.get("video_bpf_supergauss", False):
             self.Filters["RFVideo"] = gen_bpf_supergauss(
                 DP["video_bpf_low"],
@@ -917,7 +972,7 @@ class VHSRFDecode(ldd.RFDecode):
             # Filter for rf before demodulating.
             # Only use bpf if order defined - otherwise skip
             if DP.get("video_bpf_order", None):
-                y_fm = lddu.filtfft(
+                y_fm = utils.filtfft(
                     sps.butter(
                         DP["video_bpf_order"],
                         [
@@ -968,7 +1023,7 @@ class VHSRFDecode(ldd.RFDecode):
             # Add optional rf peaking filter
             from vhsdecode.addons.biquad import peaking
 
-            peaking_filter = lddu.filtfft(
+            peaking_filter = utils.filtfft(
                 peaking(
                     DP["video_rf_peak_freq"] / self.freq_hz_half,
                     DP.get("video_rf_peak_gain", 3),
@@ -1054,10 +1109,13 @@ class VHSRFDecode(ldd.RFDecode):
         F0_5 = sps.firwin(65, [0.5 / self.freq_half], pass_zero=True)
         filter_05 = filtfft((F0_5, [1.0]), self.blocklen, False)
 
-        # SF["F05"] = lddu.filtfft((F0_5, [1.0]), self.blocklen)
+        # SF["F05"] = utils.filtfft((F0_5, [1.0]), self.blocklen)
         # Defined earlier
         # SF["F05_offset"] = 32
 
+        # This filter is simple enough that we can get away with single precision
+        # sections and thus do the filtering in sngle precision.
+        # On higher order filters this is not viable as it tends to alter the filter too much.
         self.Filters["FEnvPost"] = sps.butter(
             1, [700000 / self.freq_hz_half], btype="lowpass", output="sos"
         )
@@ -1134,6 +1192,7 @@ class VHSRFDecode(ldd.RFDecode):
         self, data=None, mtf_level=0, fftdata=None, cut=False, thread_benchmark=False
     ):
         rv = {}
+        demod_block_debug = False
         demod_start_time = time.time()
         if fftdata is not None:
             indata_fft = fftdata
@@ -1146,6 +1205,7 @@ class VHSRFDecode(ldd.RFDecode):
             data = npfft.ifft(indata_fft).real
 
         if self.debug_plot and self.debug_plot.is_plot_requested("demodblock"):
+            demod_block_debug = True
             # If we're doing a plot make a copy of the input to be able to plot it since we
             # are modifying the data in place.
             indata_fft_copy = indata_fft.copy()
@@ -1156,7 +1216,9 @@ class VHSRFDecode(ldd.RFDecode):
         # Applies RF filters
         indata_fft *= self.Filters["RFVideo"]
 
-        raw_filtered = npfft.ifft(indata_fft * self.Filters["hilbert"]).real
+        raw_filtered = npfft.ifft(indata_fft * self.Filters["hilbert"]).real.astype(
+            np.single
+        )
 
         # Calculate an evelope with signal strength using absolute of hilbert transform.
         # Roll this a bit to compensate for filter delay, value eyballed for now.
@@ -1165,7 +1227,8 @@ class VHSRFDecode(ldd.RFDecode):
         del raw_filtered
         # Downconvert to single precision for some possible speedup since we don't need
         # super high accuracy for the dropout detection.
-        env = utils.filter_simple(raw_env, self.Filters["FEnvPost"]).astype(np.single)
+        env = sosfiltfilt_rust(self.Filters["FEnvPost"], raw_env)
+
         del raw_env
         env_mean = np.mean(env)
 
@@ -1174,9 +1237,9 @@ class VHSRFDecode(ldd.RFDecode):
         if len(np.where(env == 0)[0]) == 0:  # checks for zeroes on env
             if self._high_boost is not None:
                 data_filtered = npfft.ifft(indata_fft).real
-                high_part = utils.filter_simple(
-                    data_filtered, self.Filters["RFTop"]
-                ) * ((env_mean * 0.9) / env)
+                high_part = sosfiltfilt_rust(self.Filters["RFTop"], data_filtered) * (
+                    (env_mean * 0.9) / env
+                )
                 del data_filtered
                 indata_fft += npfft.fft(high_part * self._high_boost)
         else:
@@ -1184,8 +1247,16 @@ class VHSRFDecode(ldd.RFDecode):
 
         hilbert = npfft.ifft(indata_fft * self.Filters["hilbert"])
 
+        if not demod_block_debug:
+            del indata_fft
+
         # FM demodulator
-        demod = unwrap_hilbert(hilbert, self.freq_hz).real
+        # test1 = np.angle(hilbert)
+        # from vhsd_rust import complex_angle_py
+        # test2 = hilbert
+        # print(test1 - test2)
+        # np.savez_compressed("hilbert_data", data=hilbert)
+        demod = unwrap_hilbert(hilbert, self.freq_hz)
 
         # If there are obviously out of bounds values, do an extra demod on a diffed waveform and
         # replace the spikes with data from the diffed demod. (Which in practice is an extra EQed signal)
@@ -1269,6 +1340,7 @@ class VHSRFDecode(ldd.RFDecode):
                 self.Filters["FVideoNotch"],
                 self._notch,
                 move=int(self.options.chroma_offset),
+                audio_notch=self.Filters.get("FChromaAudioNotch", None),
                 # TODO: Do we need to tweak move elsewhere too?
                 # if cafc is enabled, this filtering will be done after TBC
             )
@@ -1285,11 +1357,12 @@ class VHSRFDecode(ldd.RFDecode):
                 rfdecode=self,
             )
 
-        if self.debug_plot and self.debug_plot.is_plot_requested("demodblock"):
+        if demod_block_debug:
             from vhsdecode.debug_plot import plot_input_data
 
             plot_input_data(
                 raw_data=data,
+                filtered_data=npfft.ifft(indata_fft).real,
                 env=env,
                 env_mean=env_mean,
                 raw_fft=indata_fft_copy,

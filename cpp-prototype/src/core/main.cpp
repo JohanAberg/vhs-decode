@@ -5,6 +5,8 @@
 #include <memory>
 #include <string>
 #include <iomanip>
+#include <algorithm>
+#include <cmath>
 #include "vhsdecode/types.hpp"
 #include "vhsdecode/rf_reader.hpp"
 #include "vhsdecode/tbc_writer.hpp"
@@ -16,6 +18,7 @@
 #include "vhsdecode/sync_detector.hpp"
 #include "vhsdecode/vsync_detector.hpp"
 #include "vhsdecode/tbc_scaler.hpp"
+#include "vhsdecode/iir_filter.hpp"
 #include "formats/format_base.hpp"
 #include "formats/vhs_format.hpp"
 
@@ -405,7 +408,8 @@ int main(int argc, char* argv[]) {
             videoParams.system = systemToString(config.system.system);
             videoParams.tapeFormat = "VHS";
             videoParams.fieldWidth = outputLineLen;  // TBC output line length
-            videoParams.fieldHeight = config.system.fieldLines[0];
+            // Match Python metadata (PAL fields reported as 313 lines)
+            videoParams.fieldHeight = config.system.fieldLines[1];
             videoParams.sampleRate = outputSampleRate;
             videoParams.numberOfSequentialFields = 0; // Will update as we write
             writer.setVideoParameters(videoParams);
@@ -417,7 +421,11 @@ int main(int argc, char* argv[]) {
             size_t blocksToProcess = totalBlocks - startBlock;
             // samplesPerLine at input rate for accumulation
             size_t samplesPerLine = inputLineLen;
-            size_t samplesPerField = samplesPerLine * config.system.fieldLines[0];
+            // Use parity-specific field lengths (PAL: 312/313)
+            size_t samplesPerFieldOdd = samplesPerLine * config.system.fieldLines[0];
+            size_t samplesPerFieldEven = samplesPerLine * config.system.fieldLines[1];
+            size_t samplesPerFieldMax = std::max(samplesPerFieldOdd, samplesPerFieldEven);
+            double avgSamplesPerField = 0.5 * (samplesPerFieldOdd + samplesPerFieldEven);
             
             std::cout << "\nProcessing parameters:\n";
             std::cout << "  Total file size: " << reader.getFileSize() << " bytes\n";
@@ -429,17 +437,20 @@ int main(int argc, char* argv[]) {
             std::cout << "  Line period: " << linePeriodUS << " µs\n";
             std::cout << "  Input samples per line: " << inputLineLen << " (at " << config.inputFreqMHz << " MHz)\n";
             std::cout << "  Output samples per line: " << outputLineLen << " (at " << (4.0 * fscMHz) << " MHz)\n";
-            std::cout << "  Samples per field (input): " << samplesPerField << "\n";
-            std::cout << "  Expected fields: ~" << ((reader.getFileSize() - seekOffset) / samplesPerField) << "\n\n";
+            std::cout << "  Samples per field (input): odd=" << samplesPerFieldOdd
+                      << " even=" << samplesPerFieldEven << "\n";
+            std::cout << "  Expected fields: ~" << static_cast<size_t>((reader.getFileSize() - seekOffset) / avgSamplesPerField)
+                      << " (avg)\n\n";
             
             // Process blocks and assemble fields
             std::vector<uint16_t> videoBuffer;
             std::vector<uint16_t> chromaBuffer;
             std::vector<float> videoFloatBuffer;  // For sync detection (float domain)
-            videoBuffer.reserve(samplesPerField * 2);
-            chromaBuffer.reserve(samplesPerField * 2);
-            videoFloatBuffer.reserve(samplesPerField * 2);
+            videoBuffer.reserve(samplesPerFieldMax * 2);
+            chromaBuffer.reserve(samplesPerFieldMax * 2);
+            videoFloatBuffer.reserve(samplesPerFieldMax * 2);
             size_t fieldCount = 0;
+            size_t accumulatedFieldSamples = 0;    // Track per-field start positions for metadata
             size_t totalSamplesProcessed = 0;
             size_t lastProgressPercent = 0;
             
@@ -467,6 +478,22 @@ int main(int argc, char* argv[]) {
             std::cout << "  EQ pulse: " << vsyncConfig.eqPulseUS << " µs\n";
             std::cout << "  VSYNC pulse: " << vsyncConfig.vsyncPulseUS << " µs\n";
             std::cout << "  EQ pulses per section: " << vsyncConfig.numEqPulses << "\n";
+            
+            // Video low-pass filter (frequency domain, matches Python's filter_video_lpf)
+            // VHS PAL: 3.4 MHz cutoff, 6th order Butterworth (from vhsdecode/format_defs/vhs.py)
+            bool isPAL = (config.system.system == TVSystem::PAL);
+            double videoLpfCutoffMHz = isPAL ? 3.4 : 6.6;
+            int videoLpfOrder = 6;
+            rf::FilterBank videoFilterBank(config.inputFreqMHz, config.blockSize);
+            videoFilterBank.createButterworthLPF("video_lpf", videoLpfCutoffMHz, videoLpfOrder);
+            const auto& videoLpfFilter = videoFilterBank.getFilter("video_lpf");
+            
+            // Create FFT engine for video LPF application
+            rf::FFTEngine videoFftEngine(config.blockSize, false);
+            
+            std::cout << "\nVideo low-pass filter:\n";
+            std::cout << "  Type: " << (isPAL ? "PAL (3.4 MHz)" : "NTSC (6.6 MHz)") << "\n";
+            std::cout << "  Order: " << videoLpfOrder << " (Butterworth, frequency domain)\n";
             
             // Sync threshold in digital units
             // With new scaling: sync tip (-40 IRE) = 256, black (0 IRE) = 15616
@@ -512,15 +539,17 @@ int main(int argc, char* argv[]) {
             
             // Detect field boundaries in digitized video
             fieldBoundaries = vsyncDetector.detect(initialVideo);
-            
+
             size_t fieldStartOffset = 0;
+            bool firstFieldIsOdd = true;  // default assumption
             if (!fieldBoundaries.empty()) {
                 fieldStartOffset = fieldBoundaries[0].position;
+                firstFieldIsOdd = fieldBoundaries[0].isFirstField;
                 std::cout << "✓ Found " << fieldBoundaries.size() << " field boundaries\n";
                 std::cout << "  First field starts at sample " << fieldStartOffset 
                           << " (line ~" << (fieldStartOffset / inputLineLen) << ")\n";
-                std::cout << "  Field type: " << (fieldBoundaries[0].isFirstField ? "Odd (1)" : "Even (2)") << "\n";
-                
+                std::cout << "  Field type: " << (firstFieldIsOdd ? "Odd (1)" : "Even (2)") << "\n";
+
                 if (fieldBoundaries.size() >= 2) {
                     size_t fieldLen = fieldBoundaries[1].position - fieldBoundaries[0].position;
                     std::cout << "  Field length: " << fieldLen << " samples (~" 
@@ -533,24 +562,29 @@ int main(int argc, char* argv[]) {
             // Clear initial buffers and start fresh from field boundary
             initialVideo.clear();
             
-            // Pre-skip samples to align with field boundary
+            // Pre-skip samples to align with field boundary (enable by default when detected)
             size_t samplesSkipped = 0;  // Track how many samples to skip in first field
-            if (fieldStartOffset > 0) {
+            size_t initialSkippedSamples = 0; // Remember skipped amount for metadata offsets
+            bool userProvidedSeek = (seekOffset > 0);
+            bool skipToVsync = (!userProvidedSeek && fieldStartOffset > 0);
+            if (skipToVsync) {
                 samplesSkipped = fieldStartOffset;
+                initialSkippedSamples = samplesSkipped;
                 std::cout << "  Skipping first " << samplesSkipped << " samples to align with field boundary\n";
+            } else if (userProvidedSeek && fieldStartOffset > 0) {
+                std::cout << "  Using user seek as field start (no pre-skip)\n";
             }
             
             // Track the input RF file position for each field
-            // inputRFPosition tracks the byte position in the input file where current buffer starts
-            // For the first field, it's: seekOffset + fieldStartOffset (samples = bytes for uint8)
-            size_t inputRFBasePosition = seekOffset;  // Base position from --seek option
+            // Keep fileLoc anchored to the user-provided seek plus any initial skip to the first boundary
+            size_t inputRFBasePosition = seekOffset;
             size_t currentInputSampleOffset = 0;      // Cumulative samples processed
             
             std::cout << "\nDecoding: [";
             std::cout.flush();
             
             // Track if we need to skip samples in the accumulated buffer
-            bool needToSkipSamples = (fieldStartOffset > 0);
+            bool needToSkipSamples = (skipToVsync && fieldStartOffset > 0);
             
             size_t processedBlocks = 0;
             for (size_t blockNum = startBlock; blockNum < totalBlocks; ++blockNum) {
@@ -563,6 +597,32 @@ int main(int argc, char* argv[]) {
                 
                 // FM demodulate (reuse existing object)
                 auto fmResult = fmDemod.demodulate(rfResult.analyticSignal);
+                
+                // Debug: print FM demod output BEFORE video LPF (first block only)
+                if (processedBlocks == 0) {
+                    float minPre = *std::min_element(fmResult.video.begin(), fmResult.video.end());
+                    float maxPre = *std::max_element(fmResult.video.begin(), fmResult.video.end());
+                    float sumPre = 0;
+                    for (auto v : fmResult.video) sumPre += v;
+                    float avgPre = sumPre / fmResult.video.size();
+                    std::cout << "\n  FM demod BEFORE video LPF:\n";
+                    std::cout << "    Range: " << (minPre/1e6) << " to " << (maxPre/1e6) << " MHz\n";
+                    std::cout << "    Mean: " << (avgPre/1e6) << " MHz\n";
+                    std::cout << "    First 10: [";
+                    for (size_t i = 0; i < 10 && i < fmResult.video.size(); ++i) {
+                        std::cout << std::fixed << std::setprecision(2) << (fmResult.video[i]/1e6);
+                        if (i < 9) std::cout << ", ";
+                    }
+                    std::cout << "] MHz\n";
+                }
+                
+                // Apply video low-pass filter in frequency domain (matches Python's filter_video_lpf)
+                // FFT -> multiply by filter -> IFFT
+                {
+                    auto videoFft = videoFftEngine.forwardFFT(fmResult.video);
+                    videoFftEngine.applyFilter(videoFft, videoLpfFilter);
+                    fmResult.video = videoFftEngine.inverseFFT(videoFft);
+                }
                 
                 // Debug: print video value range on first block
                 if (processedBlocks == 0) {
@@ -611,6 +671,21 @@ int main(int argc, char* argv[]) {
                 float outputZero = 256.0f;       // Digital value at sync tip
                 float outScale = 53760.0f / 142.857f;  // = 376.32 digital per IRE
                 
+                // Debug: print first block's digital values before resampling
+                if (processedBlocks == 0) {
+                    std::cout << "\n  Digital values (first block, before TBC resample):\n";
+                    std::cout << "    First 10: [";
+                    for (size_t i = 0; i < 10 && i < fmResult.video.size(); ++i) {
+                        float freqHz = fmResult.video[i];
+                        float ire = (freqHz - ire0Hz) / hzPerIre;
+                        float digital = (ire - vsyncIre) * outScale + outputZero;
+                        digital = std::max(0.0f, std::min(65535.0f, digital));
+                        std::cout << static_cast<int>(digital);
+                        if (i < 9) std::cout << ", ";
+                    }
+                    std::cout << "]\n";
+                }
+                
                 for (size_t i = 0; i < fmResult.video.size(); ++i) {
                     // Convert frequency to IRE: IRE = (freq - ire0) / hzPerIre
                     float freqHz = fmResult.video[i];
@@ -653,15 +728,18 @@ int main(int argc, char* argv[]) {
                     std::cout << " (skipped " << samplesSkipped << " samples to field boundary) ";
                 }
                 
-                // Check if we have enough samples for a field
-                while (videoBuffer.size() >= samplesPerField && chromaBuffer.size() >= samplesPerField && 
-                       videoFloatBuffer.size() >= samplesPerField) {
-                    
+                // Check if we have enough samples for a field (parity-aware)
+                while (true) {
                     size_t samplesNeeded = samplesPerLine * config.system.fieldLines[fieldCount % 2];
+                    if (videoBuffer.size() < samplesNeeded || chromaBuffer.size() < samplesNeeded ||
+                        videoFloatBuffer.size() < samplesNeeded) {
+                        break;
+                    }
                     
                     // Run sync detection on accumulated video data
-                    std::vector<size_t> lineStarts;
+                    std::vector<double> lineStarts;
                     int detectedLineLength = static_cast<int>(samplesPerLine);
+                    float expectedLineLenCurrent = expectedLineLen;
                     bool syncFound = false;
                     
                     if (useSyncDetection && videoFloatBuffer.size() >= samplesNeeded) {
@@ -674,48 +752,108 @@ int main(int argc, char* argv[]) {
                         
                         if (!pulses.empty()) {
                             // Compute line locations from pulses
-                            auto lineInfos = syncDetector.computeLineLocations(pulses, expectedLineLen);
+                            auto lineInfos = syncDetector.computeLineLocations(
+                                pulses, expectedLineLenCurrent, videoForSync, syncThresholdDigital);
                             
-                            // Convert to simple line start positions
+                            // Convert to simple line start positions (keep fractional positions)
                             for (const auto& info : lineInfos) {
                                 if (info.valid) {
-                                    lineStarts.push_back(static_cast<size_t>(info.startSample));
+                                    lineStarts.push_back(info.startSample);
                                 }
                             }
                             
+                            size_t expectedLines = static_cast<size_t>(config.system.fieldLines[fieldCount % 2]);
                             if (!lineStarts.empty()) {
-                                // Estimate detected line length from first few lines
-                                if (lineStarts.size() >= 2) {
-                                    detectedLineLength = static_cast<int>(lineStarts[1] - lineStarts[0]);
+                                double firstDetectedStart = lineStarts.front();
+                                std::vector<double> diffs;
+                                diffs.reserve(lineStarts.size() - 1);
+                                for (size_t i = 1; i < lineStarts.size(); ++i) {
+                                    double d = lineStarts[i] - lineStarts[i-1];
+                                    if (d > 0) diffs.push_back(d);
                                 }
-                                
-                                // Only use sync detection if we found enough lines
-                                // (should find at least 80% of expected lines)
-                                size_t expectedLines = static_cast<size_t>(config.system.fieldLines[fieldCount % 2]);
-                                if (lineStarts.size() >= expectedLines * 0.8) {
-                                    syncFound = true;
-                                } else {
-                                    // Not enough lines - clear and fall back to fixed positions
-                                    if (fieldCount == 0) {
-                                        std::cout << "\n  Sync detection found only " << lineStarts.size() 
-                                                  << " lines (need " << expectedLines << ") - using fallback\n";
+
+                                double minLen = expectedLineLenCurrent * 0.995;  // tighter clamp ±0.5%
+                                double maxLen = expectedLineLenCurrent * 1.005;
+                                double lineLen = expectedLineLenCurrent;
+
+                                // Linear regression smoothing of line starts (Python-style lineloc smoothing)
+                                if (lineStarts.size() >= 3) {
+                                    double sumX = 0.0, sumY = 0.0, sumXY = 0.0, sumX2 = 0.0;
+                                    for (size_t i = 0; i < lineStarts.size(); ++i) {
+                                        double x = static_cast<double>(i);
+                                        double y = lineStarts[i];
+                                        sumX += x;
+                                        sumY += y;
+                                        sumXY += x * y;
+                                        sumX2 += x * x;
                                     }
-                                    lineStarts.clear();
-                                }
-                                
-                                // Debug: print sync info on first field
-                                if (fieldCount == 0) {
-                                    std::cout << "\n  Sync detection results (first field):\n";
-                                    std::cout << "    Pulses found: " << pulses.size() << "\n";
-                                    std::cout << "    Lines detected: " << lineStarts.size() << "\n";
-                                    std::cout << "    Detected line length: " << detectedLineLength << " samples\n";
-                                    if (lineStarts.size() >= 3) {
-                                        std::cout << "    First 3 line starts: ";
-                                        for (size_t i = 0; i < 3; ++i) {
-                                            std::cout << lineStarts[i] << " ";
+                                    double n = static_cast<double>(lineStarts.size());
+                                    double denom = (n * sumX2 - sumX * sumX);
+                                    if (denom != 0.0) {
+                                        double slope = (n * sumXY - sumX * sumY) / denom;
+                                        if (slope > 0.0) {
+                                            slope = std::clamp(slope, minLen, maxLen);
+                                            lineLen = slope;
                                         }
-                                        std::cout << "\n";
                                     }
+                                }
+
+                                // Fallback to median if regression failed or produced nonpositive slope
+                                if ((lineLen <= 0.0) && !diffs.empty()) {
+                                    auto sorted = diffs;
+                                    std::sort(sorted.begin(), sorted.end());
+                                    double median = sorted[sorted.size() / 2];
+                                    if (sorted.size() % 2 == 0 && sorted.size() >= 2) {
+                                        median = 0.5 * (sorted[sorted.size()/2 - 1] + sorted[sorted.size()/2]);
+                                    }
+                                    lineLen = median;
+                                }
+
+                                if (lineLen <= 0.0) {
+                                    lineLen = expectedLineLenCurrent;
+                                }
+
+                                lineLen = std::clamp(lineLen, minLen, maxLen);
+                                detectedLineLength = static_cast<int>(lineLen);
+
+                                // Re-anchor grid so the first detected start lands near 0 on the line grid
+                                double firstStart = firstDetectedStart;
+                                if (lineLen > 0.0) {
+                                    double k = std::round(firstStart / lineLen);
+                                    firstStart -= k * lineLen;
+                                }
+                                std::vector<double> rebuilt;
+                                rebuilt.reserve(expectedLines);
+                                for (size_t i = 0; i < expectedLines; ++i) {
+                                    rebuilt.push_back(firstStart + i * lineLen);
+                                }
+                                lineStarts.swap(rebuilt);
+
+                                expectedLineLen = static_cast<float>(lineLen);  // carry forward for next fields
+                                syncFound = true;
+                            }
+
+                            if (!syncFound) {
+                                // Not enough lines - clear and fall back to fixed positions
+                                if (fieldCount == 0) {
+                                    std::cout << "\n  Sync detection found only " << lineStarts.size() 
+                                              << " lines (need " << expectedLines << ") - using fallback\n";
+                                }
+                                lineStarts.clear();
+                            }
+
+                            // Debug: print sync info on first field
+                            if (fieldCount == 0) {
+                                std::cout << "\n  Sync detection results (first field):\n";
+                                std::cout << "    Pulses found: " << pulses.size() << "\n";
+                                std::cout << "    Lines detected: " << lineStarts.size() << "\n";
+                                std::cout << "    Detected line length: " << detectedLineLength << " samples\n";
+                                if (lineStarts.size() >= 3) {
+                                    std::cout << "    First 3 line starts: ";
+                                    for (size_t i = 0; i < 3; ++i) {
+                                        std::cout << lineStarts[i] << " ";
+                                    }
+                                    std::cout << "\n";
                                 }
                             }
                         }
@@ -725,7 +863,7 @@ int main(int argc, char* argv[]) {
                     if (!syncFound) {
                         lineStarts.clear();
                         for (size_t line = 0; line < static_cast<size_t>(config.system.fieldLines[fieldCount % 2]); ++line) {
-                            lineStarts.push_back(line * samplesPerLine);
+                            lineStarts.push_back(static_cast<double>(line * samplesPerLine));
                         }
                     }
                     
@@ -733,13 +871,21 @@ int main(int argc, char* argv[]) {
                     // This converts from input rate (2560 samples/line) to output rate (1135 samples/line)
                     size_t numLines = std::min(lineStarts.size(), 
                                                static_cast<size_t>(config.system.fieldLines[fieldCount % 2]));
-                    
+
+                    // Zero-base line starts for scaling but keep original offset for consumption/fileLoc
+                    std::vector<double> lineStartsForScaling;
+                    lineStartsForScaling.reserve(lineStarts.size());
+                    double startOffset = lineStarts.empty() ? 0.0 : lineStarts.front();
+                    for (double v : lineStarts) {
+                        lineStartsForScaling.push_back(v - startOffset);
+                    }
+
                     // Create RealArray from float buffer for scaling
                     RealArray videoForScaling(videoFloatBuffer.begin(), 
                                               videoFloatBuffer.begin() + std::min(videoFloatBuffer.size(), samplesNeeded + inputLineLen));
                     
                     // Scale the field using TBC scaler
-                    auto scaledLines = tbcScaler.scaleField(videoForScaling, lineStarts, numLines);
+                    auto scaledLines = tbcScaler.scaleField(videoForScaling, lineStartsForScaling, numLines);
                     
                     // Convert scaled lines to VideoField (uint16_t)
                     VideoField field;
@@ -756,15 +902,6 @@ int main(int argc, char* argv[]) {
                         }
                         field.push_back(videoLine);
                         
-                        // Track samples consumed (at input rate)
-                        if (lineIdx < lineStarts.size()) {
-                            size_t lineEnd = (lineIdx + 1 < lineStarts.size()) 
-                                           ? lineStarts[lineIdx + 1] 
-                                           : lineStarts[lineIdx] + inputLineLen;
-                            if (lineEnd > samplesConsumed) {
-                                samplesConsumed = lineEnd;
-                            }
-                        }
                     }
                     
                     // Fill remaining lines if sync didn't find enough
@@ -788,7 +925,12 @@ int main(int argc, char* argv[]) {
                     }
                     
                     // Determine samples to remove based on what we actually consumed
-                    samplesConsumed = std::max(samplesConsumed, samplesNeeded);
+                    if (!lineStarts.empty()) {
+                        double span = (lineStarts.back() + static_cast<double>(detectedLineLength)) - startOffset;
+                        samplesConsumed = static_cast<size_t>(std::ceil(span));
+                    } else {
+                        samplesConsumed = samplesNeeded;
+                    }
                     
                     // Write video and chroma fields to TBC
                     writer.writeVideoField(field, fieldCount);
@@ -798,17 +940,16 @@ int main(int argc, char* argv[]) {
                     FieldMetadata fieldMeta;
                     fieldMeta.fieldNumber = fieldCount;
                     fieldMeta.seqNo = fieldCount + 1;
-                    fieldMeta.isFirstField = (fieldCount % 2 == 0);
+                    // Use detected parity if available; default to alternating starting with odd
+                    bool isFirst = firstFieldIsOdd ? (fieldCount % 2 == 0) : (fieldCount % 2 != 0);
+                    fieldMeta.isFirstField = isFirst;
                     fieldMeta.lineCount = field.size();
                     
                     // Calculate input RF file position for this field
                     // fileLoc = byte position in the input RF file where this field starts
-                    // The buffer contains samples that haven't been used yet
-                    // currentInputSampleOffset is cumulative samples read from input
-                    // videoBuffer.size() is samples remaining in buffer (not yet assigned to fields)
-                    // So field starts at: inputRFBasePosition + (currentInputSampleOffset - videoBuffer.size() - samplesNeeded + samplesConsumed)
-                    // For simplicity, track fieldInputPosition = field start position in input bytes
-                    size_t fieldInputPosition = inputRFBasePosition + fieldStartOffset + (fieldCount * samplesPerField);
+                    // Track cumulative samples consumed per field so parity-specific lengths propagate correctly
+                    // Treat user --seek as the start of the first output field to align with Python baseline
+                    size_t fieldInputPosition = inputRFBasePosition + initialSkippedSamples + accumulatedFieldSamples;
                     fieldMeta.fileLoc = fieldInputPosition;
                     
                     fieldMeta.diskLoc = static_cast<double>(fieldCount) + 1.4;
@@ -818,6 +959,7 @@ int main(int argc, char* argv[]) {
                     writer.addFieldMetadata(fieldCount, fieldMeta);
                     
                     fieldCount++;
+                    accumulatedFieldSamples += samplesConsumed;
                     
                     // Check if we've reached the frame limit (1 frame = 2 fields)
                     if (lengthFrames > 0 && fieldCount >= static_cast<size_t>(lengthFrames * 2)) {

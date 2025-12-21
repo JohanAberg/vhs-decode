@@ -27,20 +27,21 @@
 F2SectionCorrection::F2SectionCorrection()
     : m_leadinComplete(false),
       m_maximumGapSize(10),
+      m_paddingWatermark(5),
       m_totalSections(0),
       m_correctedSections(0),
       m_uncorrectableSections(0),
       m_preLeadinSections(0),
       m_missingSections(0),
-      m_absoluteStartTime(59, 59, 74),
-      m_absoluteEndTime(0, 0, 0),
-      m_outOfOrderSections(0),
       m_paddingSections(0),
-      m_paddingWatermark(5),
+      m_outOfOrderSections(0),
       m_qmode1Sections(0),
       m_qmode2Sections(0),
       m_qmode3Sections(0),
-      m_qmode4Sections(0)
+      m_qmode4Sections(0),
+      m_absoluteStartTime(59, 59, 74),
+      m_absoluteEndTime(0, 0, 0),
+      m_noTimecodes(false)
 {}
 
 void F2SectionCorrection::pushSection(const F2Section &data)
@@ -64,8 +65,22 @@ bool F2SectionCorrection::isReady() const
     return !m_outputBuffer.isEmpty();
 }
 
+bool F2SectionCorrection::isValid() const
+{
+    // Return true if the leadin process was complete and we
+    // therefore have valid data
+    return m_leadinComplete;
+}
+
 void F2SectionCorrection::processQueue()
 {
+    // If no timecodes flag is set, skip leadin checks and process all sections directly
+    if (m_noTimecodes && !m_leadinComplete) {
+        if (m_showDebug)
+            qDebug() << "F2SectionCorrection::processQueue(): No timecodes flag set, skipping leadin checks.";
+        m_leadinComplete = true;
+    }
+
     // Process the input buffer
     while (!m_inputBuffer.isEmpty()) {
         // Dequeue the next section
@@ -106,7 +121,7 @@ void F2SectionCorrection::waitForInputToSettle(F2Section &f2Section)
                                 "section to leadin buffer with absolute time"
                              << f2Section.metadata.absoluteSectionTime().toString();
 
-                // Do we have 5 valid, contigious sections in the leadin buffer?
+                // Do we have 5 valid, contiguous sections in the leadin buffer?
                 if (m_leadinBuffer.size() >= 5) {
                     m_leadinComplete = true;
 
@@ -130,12 +145,28 @@ void F2SectionCorrection::waitForInputToSettle(F2Section &f2Section)
                                 "buffer discarded).";
             }
         } else {
-            // The leadin buffer is empty, so we can just add the section
+            // The leadin buffer is empty, so we can now add the collected section to the leadin buffer
             m_leadinBuffer.enqueue(f2Section);
-            if (m_showDebug)
-                qDebug() << "F2SectionCorrection::waitForInputToSettle(): Added section to "
-                            "lead in buffer with absolute time"
-                         << f2Section.metadata.absoluteSectionTime().toString();
+            if (m_showDebug) {
+                qDebug() << "F2SectionCorrection::waitForInputToSettle(): Added section to leadin buffer with valid metadata:";
+                qDebug() << "F2SectionCorrection::waitForInputToSettle():   Absolute time:" << f2Section.metadata.absoluteSectionTime().toString();
+                qDebug() << "F2SectionCorrection::waitForInputToSettle():   Section time:" << f2Section.metadata.sectionTime().toString();
+                {
+                    SectionType st = f2Section.metadata.sectionType();
+                    QString sectionTypeStr;
+                    switch (st.type()) {
+                        case SectionType::LeadIn:  sectionTypeStr = "LeadIn";  break;
+                        case SectionType::LeadOut: sectionTypeStr = "LeadOut"; break;
+                        case SectionType::UserData:sectionTypeStr = "UserData";break;
+                        default: sectionTypeStr = QString("Unknown(%1)").arg(static_cast<int>(st.type())); break;
+                    }
+                    qDebug() << "F2SectionCorrection::waitForInputToSettle():   Section type:" << sectionTypeStr;
+                }
+                qDebug() << "F2SectionCorrection::waitForInputToSettle():   Track number:" << f2Section.metadata.trackNumber();
+            }
+
+            // At this point, we have no idea if the section has a valid absolute time or not
+            // a value of 00:00:00 will happen in either case.
         }
     } else {
         // The current section doesn't have valid metadata
@@ -173,9 +204,27 @@ void F2SectionCorrection::waitingForSection(F2Section &f2Section)
     // What is the next expected section time?
     SectionTime expectedAbsoluteTime = getExpectedAbsoluteTime();
 
-    // Check for Q-mode 2 and 3 sections - these will only have valid frame numbers in the 
+    // If no timecodes flag is set, we cannot perform any timecode-based checks so we
+    // set the section's absolute time to the expected time
+    if (m_noTimecodes) {
+        f2Section.metadata.setAbsoluteSectionTime(expectedAbsoluteTime);
+        f2Section.metadata.setSectionTime(expectedAbsoluteTime);
+        
+        // Create a SectionType object and set it to UserData, then pass that to setSectionType
+        SectionType st;
+        st.setType(SectionType::UserData);
+        f2Section.metadata.setSectionType(st, 1); // Track number 1 for no timecodes
+
+        if (m_showDebug) {
+            qDebug() << "F2SectionCorrection::waitingForSection(): No timecodes flag set, setting "
+                        "section absolute time to expected time"
+                     << expectedAbsoluteTime.toString();
+        }
+    }
+
+    // Check for Q-mode 2 and 3 sections - these will only have valid frame numbers in the
     // absolute time (i.e. minutes and seconds will be zero).
-    // 
+    //
     // If found, update the absolute time to the mm:ss expected time (leaving the frame number as-is)
     if (f2Section.metadata.isValid() && (
         f2Section.metadata.qMode() == SectionMetadata::QMode2 || f2Section.metadata.qMode() == SectionMetadata::QMode3)) {
@@ -203,7 +252,7 @@ void F2SectionCorrection::waitingForSection(F2Section &f2Section)
 
         // The current section is not the expected section
         if (f2Section.metadata.absoluteSectionTime() > expectedAbsoluteTime) {
-            // The current section is ahead of the expected section in time, so we have 
+            // The current section is ahead of the expected section in time, so we have
             // one or more missing sections
 
             // Note: This will kick up the number of C1/C2 errors in the output. However, some
@@ -221,7 +270,7 @@ void F2SectionCorrection::waitingForSection(F2Section &f2Section)
                         << "expected absolute time is"
                         << expectedAbsoluteTime.toString() << "actual absolute time is"
                         << f2Section.metadata.absoluteSectionTime().toString();
-                qWarning() << "F2SectionCorrection::waitingForSection(): Gaps greated than" << m_paddingWatermark << "frames will be treated"
+                qWarning() << "F2SectionCorrection::waitingForSection(): Gaps greater than" << m_paddingWatermark << "frames will be treated"
                         << "as padding sections (i.e. the decoder thinks there is a gap in the EFM data rather than actual data loss).";
             }
 
@@ -265,7 +314,7 @@ void F2SectionCorrection::waitingForSection(F2Section &f2Section)
                 }
 
                 // If there are more than m_paddingWatermark missing sections, it's likely that there is a gap in the EFM data
-                // so we should flag this as a padding section (this is used downstream to give a better 
+                // so we should flag this as a padding section (this is used downstream to give a better
                 // indication of what is really in error).
 
                 // Push 98 error frames in to the missing section
@@ -273,7 +322,7 @@ void F2SectionCorrection::waitingForSection(F2Section &f2Section)
                     // Section is considered as missing, so mark it as error
                     m_missingSections++;
                     if (m_showDebug) qDebug() << "F2SectionCorrection::waitingForSection(): Inserting missing section"
-                            << "into internal buffer with absolute time:" 
+                            << "into internal buffer with absolute time:"
                             << missingSection.metadata.absoluteSectionTime().toString()
                             << "- marking all data as errors";
                     for (int i = 0; i < 98; ++i) {
@@ -287,13 +336,13 @@ void F2SectionCorrection::waitingForSection(F2Section &f2Section)
                     // Section is considered as padding, so fill it with valid data
                     m_paddingSections++;
                     if (m_showDebug) qDebug() << "F2SectionCorrection::waitingForSection(): Inserting missing section"
-                            << "into internal buffer with absolute time:" 
+                            << "into internal buffer with absolute time:"
                             << missingSection.metadata.absoluteSectionTime().toString()
                             << "- marking all data as padding";
                     for (int i = 0; i < 98; ++i) {
                         F2Frame errorFrame;
                         // Note: This data pattern will pass C1/C2 error correction resulting in a frame of zeros
-                        QVector<quint8> data = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 
+                        QVector<quint8> data = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF,
                             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF};
                         errorFrame.setData(data);
                         errorFrame.setErrorData(QVector<bool>(32, false));
@@ -403,7 +452,7 @@ void F2SectionCorrection::processInternalBuffer()
                         << m_internalBuffer[errorStart]
                                    .metadata.absoluteSectionTime()
                                    .toString()
-                        << " - "                       
+                        << " - "
                         << m_internalBuffer[errorEnd]
                                    .metadata.absoluteSectionTime()
                                    .toString()
@@ -479,9 +528,9 @@ void F2SectionCorrection::processInternalBuffer()
                                 m_internalBuffer[errorStart].metadata.trackNumber());
 
                         // Same thing for the section time
-                        SectionTime expectedSectionTime =
+                        m_internalBuffer[i].metadata.setSectionTime(
                                 m_internalBuffer[errorStart].metadata.sectionTime()
-                                + (i - errorStart);
+                                + (i - errorStart));
                     }
 
                     // Mark the corrected metadata as valid
@@ -499,7 +548,7 @@ void F2SectionCorrection::processInternalBuffer()
                                 << ", Track number "
                                 << m_internalBuffer[i].metadata.trackNumber()
                                 << " and track time "
-                                << m_internalBuffer[i].metadata.sectionTime().toString() 
+                                << m_internalBuffer[i].metadata.sectionTime().toString()
                                 << " from original metadata with absolute time "
                                 << originalMetadata.absoluteSectionTime().toString();
                 }
@@ -606,6 +655,11 @@ void F2SectionCorrection::flush()
     while (!m_internalBuffer.isEmpty()) {
         outputSections();
     }
+}
+
+void F2SectionCorrection::setNoTimecodes(bool noTimecodes)
+{
+    m_noTimecodes = noTimecodes;
 }
 
 void F2SectionCorrection::showStatistics() const

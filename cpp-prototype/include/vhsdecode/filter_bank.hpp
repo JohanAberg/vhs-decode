@@ -83,6 +83,46 @@ public:
     bool createHighpassFilter(const std::string& name, double cutoffMHz);
     
     /**
+     * @brief Create Butterworth lowpass filter (matches scipy.signal.butter frequency response)
+     * @param name Filter name/identifier  
+     * @param cutoffMHz Cutoff frequency in MHz (-3dB point)
+     * @param order Filter order
+     * @return true if created successfully
+     */
+    bool createButterworthLPF(const std::string& name, double cutoffMHz, int order);
+    
+    /**
+     * @brief Create Butterworth highpass filter (matches scipy.signal.butter frequency response)
+     * @param name Filter name/identifier  
+     * @param cutoffMHz Cutoff frequency in MHz (-3dB point)
+     * @param order Filter order
+     * @return true if created successfully
+     */
+    bool createButterworthHPF(const std::string& name, double cutoffMHz, int order);
+    
+    /**
+     * @brief Create Butterworth bandpass filter
+     * @param name Filter name/identifier
+     * @param lowCutoffMHz Low cutoff frequency in MHz (-3dB point)
+     * @param highCutoffMHz High cutoff frequency in MHz (-3dB point)
+     * @param order Filter order (per edge)
+     * @return true if created successfully
+     */
+    bool createButterworthBPF(const std::string& name, double lowCutoffMHz, 
+                              double highCutoffMHz, int order);
+    
+    /**
+     * @brief Create combined filter by multiplying two existing filters
+     * @param name Filter name/identifier for the new combined filter
+     * @param filter1Name Name of first filter
+     * @param filter2Name Name of second filter
+     * @return true if created successfully
+     */
+    bool createCombinedFilter(const std::string& name, 
+                              const std::string& filter1Name,
+                              const std::string& filter2Name);
+    
+    /**
      * @brief Get filter coefficients
      * @param name Filter name
      * @return Filter coefficients (frequency domain)

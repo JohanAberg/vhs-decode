@@ -16,18 +16,19 @@ import numba
 from numba import njit
 
 import scipy.fft as npfft
+from scipy import interpolate
 
 # internal libraries
 
 from . import efm_pll
 from .utils import get_git_info, ac3_pipe, ldf_pipe, traceback
 from .utils import nb_mean, nb_median, nb_round, nb_min, nb_max, nb_abs, nb_absmax, nb_diff, n_orgt, n_orlt
-from .utils import polar2z, sqsum, genwave, dsa_rescale_and_clip, scale, rms
+from .utils import polar2z, sqsum, genwave, dsa_rescale_and_clip, scale, scale_field, rms
 from .utils import findpeaks, findpulses, calczc, inrange, roundfloat
 from .utils import LRUupdate, clb_findbursts, angular_mean_helper, phase_distance
 from .utils import build_hilbert, unwrap_hilbert, emphasis_iir, filtfft
 from .utils import fft_do_slice, fft_determine_slices, StridedCollector, hz_to_output_array
-from .utils import Pulse, nb_std, nb_gt, n_ornotrange, nb_concatenate, gen_bpf_supergauss
+from .utils import Pulse, nb_std, nb_gt, n_ornotrange, nb_concatenate, gen_bpf_supergauss, FieldInfo
 
 try:
     # If Anaconda's numpy is installed, mkl will use all threads for fft etc
@@ -108,7 +109,7 @@ def calclinelen(SysParams, mult, mhz):
 
     return int(nb_round(SysParams["line_period"] * mhz * mult))
 
-# Compute dictionary entries for things tht use FSC, etc.
+# Compute dictionary entries for things that use FSC, etc.
 
 # In color NTSC, the line period was changed from 63.5 to 227.5 color cycles,
 # which works out to 63.555(with a bar on top) usec
@@ -285,9 +286,9 @@ class RFDecode:
         """
 
         self.blocklen     = blocklen
-        self.blockcut     = 1024 
+        self.blockcut     = 1024
         self.blockcut_end = 0
-        
+
         self.system       = system
 
         self.setupcount   = 0
@@ -336,7 +337,7 @@ class RFDecode:
 
         deemp = list(self.DecoderParams["video_deemp"])
 
-        # note that deemp[0] is the t1 (high freuqency) coefficient, and 
+        # note that deemp[0] is the t1 (high freuqency) coefficient, and
         # deemp[1] is the t2 (low frequency) one.  These are passed in as
         # microseconds, but are converted to seconds here.
 
@@ -390,7 +391,7 @@ class RFDecode:
                                    (self.SysParams['audio_rfreq_AC3'] + apass) / self.freq_hz_half]
 
             # This analog audio bandpass filter is an approximation of
-            # http://sim.okawa-denshi.jp/en/RLCtool.php with resistor 2200ohm, 
+            # http://sim.okawa-denshi.jp/en/RLCtool.php with resistor 2200ohm,
             # inductor 180uH, and cap 27pF (taken from Pioneer service manuals)
             # self.Filters['AC3_iir'] = sps.butter(5, [1.48/20, 3.45/20], btype='bandpass')
 
@@ -454,11 +455,11 @@ class RFDecode:
     # Lambda-scale functions used to simplify following filter builders
 
     # Split out the frequency list given to the filter builder
-    def freqrange(self, f1, f2): 
+    def freqrange(self, f1, f2):
         return [f1 / self.freq_hz_half, f2 / self.freq_hz_half]
 
     # Like freqrange, but for notch filters
-    def notchrange(self, f, notchwidth, hz = False): 
+    def notchrange(self, f, notchwidth, hz = False):
         return [
             (f - notchwidth) / (self.freq_hz_half if hz else self.freq_half),
             (f + notchwidth) / (self.freq_hz_half if hz else self.freq_half)
@@ -507,7 +508,7 @@ class RFDecode:
                 btype="bandstop",
             )
             SF["Fcutl"] = filtfft(cut_left, self.blocklen)
-            
+
             cut_right = sps.butter(
                 DP["audio_notchorder"],
                 self.notchrange(SP["audio_rfreq"], DP['audio_notchwidth'], True),
@@ -549,7 +550,7 @@ class RFDecode:
 
         # additional filters:  0.5mhz and color burst
         # Using an FIR filter here to get a known delay
-        
+
         F0_5 = sps.firwin(65, [0.5 / self.freq_half], pass_zero=True)
         SF["F05_offset"] = 32 # Reduced because filtfft is half-strength on FIR
 
@@ -670,7 +671,7 @@ class RFDecode:
             """ This routine works around an 'interesting' issue seen with LD-V4300D players and
                 some PAL digital audio disks, where there is a signal somewhere between 8.47 and 8.57mhz.
 
-                The idea here is to look for anomolies (3 std deviations) and snip them out of the
+                The idea here is to look for anomalies (3 std deviations) and snip them out of the
                 FFT.  There may be side effects, however, but generally minor compared to the
                 'wibble' itself and only in certain cases.
             """
@@ -953,8 +954,6 @@ class DemodCache:
         cachesize=256,
         num_worker_threads=6,
         MTF_tolerance=0.05,
-        use_batch_processing=False,
-        batch_size=10,
     ):
         self.infile = infile
         self.loader = loader
@@ -991,52 +990,14 @@ class DemodCache:
         self.ended           = False
 
         self.deqeue_thread      = threading.Thread(target=self.dequeue, daemon=True)
-        
-        # Check if we should use batch processing
-        self.use_batch_processing = use_batch_processing
-        self.batch_size = batch_size
-        
-        # Determine if GPU batch processing is available and should be used
-        use_gpu_batch = (use_batch_processing and 
-                        hasattr(rf, 'use_gpu') and rf.use_gpu and
-                        hasattr(rf, 'batch_size'))
-        
-        if use_gpu_batch:
-            # GPU batch mode: single worker with batch processing
-            import logging
-            logger = logging.getLogger(__name__)
-            logger.info(f"Using GPU batch processing: batch_size={batch_size}, worker_threads=1")
-            
-            self.num_worker_threads = 1
-            
-            # Initialize batch processor if not already done
-            if not hasattr(rf, 'batch_processor') or rf.batch_processor is None:
-                try:
-                    from vhsdecode.gpu_batch_processor import BatchProcessor
-                    rf.batch_processor = BatchProcessor(rf, batch_size=batch_size)
-                    logger.info(f"Initialized BatchProcessor with batch_size={batch_size}")
-                except Exception as e:
-                    logger.error(f"Failed to initialize BatchProcessor: {e}, falling back to standard mode")
-                    use_gpu_batch = False
-                    self.num_worker_threads = num_worker_threads
-            
-            if use_gpu_batch:
-                t = threading.Thread(
-                    target=self.gpu_batch_worker, daemon=True, args=(batch_size,)
-                )
-                t.start()
-                self.threads.append(t)
-        
-        if not use_gpu_batch:
-            # Standard mode: multiple workers
-            self.num_worker_threads = num_worker_threads
-            
-            for i in range(num_worker_threads):
-                t = threading.Thread(
-                    target=self.worker, daemon=True, args=()
-                )
-                t.start()
-                self.threads.append(t)
+        self.num_worker_threads = num_worker_threads
+
+        for i in range(num_worker_threads):
+            t = threading.Thread(
+                target=self.worker, daemon=True, args=()
+            )
+            t.start()
+            self.threads.append(t)
 
         self.deqeue_thread.start()
 
@@ -1128,118 +1089,6 @@ class DemodCache:
                 self.q_out.put((blocknum, output))
             elif item[0] == "NEWPARAMS":
                 self.apply_newparams(item[1])
-    
-    def gpu_batch_worker(self, batch_size=10):
-        """
-        GPU-specific worker that processes blocks in batches.
-        
-        This worker accumulates blocks up to batch_size, then processes them
-        together on GPU to amortize PCIe transfer latency.
-        
-        Args:
-            batch_size: Number of blocks to accumulate before processing
-        """
-        import logging
-        from queue import Empty
-        logger = logging.getLogger(__name__)
-        
-        rf = self.rf
-        batch_items = []
-        batch_blocks = []
-        batch_params = []
-        
-        # Check if we have batch processor
-        if not hasattr(rf, 'batch_processor') or rf.batch_processor is None:
-            logger.warning("GPU batch worker called but no batch processor available, falling back to standard worker")
-            return self.worker()
-        
-        while True:
-            # Accumulate batch
-            while len(batch_items) < batch_size:
-                try:
-                    item = self.q_in.get(timeout=0.1)
-                except Empty:
-                    # Timeout - process what we have if any
-                    break
-                    
-                if item is None or (isinstance(item, tuple) and item[0] == "END"):
-                    # Process remaining batch and exit
-                    break
-                    
-                if isinstance(item, tuple) and item[0] == "DEMOD":
-                    blocknum, block, target_MTF, request = item[1:]
-                    
-                    # Prepare FFT data if needed
-                    if "fft" not in block:
-                        import numpy.fft as npfft
-                        fftdata = npfft.fft(block["rawinput"])
-                    else:
-                        fftdata = block["fft"]
-                    
-                    batch_items.append((blocknum, block, target_MTF, request))
-                    batch_blocks.append(block["rawinput"])
-                    batch_params.append((target_MTF, request))
-                elif isinstance(item, tuple) and item[0] == "NEWPARAMS":
-                    # Process batch first, then apply new params
-                    break
-            
-            if not batch_items:
-                if item is None or (isinstance(item, tuple) and item[0] == "END"):
-                    return
-                elif isinstance(item, tuple) and item[0] == "NEWPARAMS":
-                    self.apply_newparams(item[1])
-                continue
-            
-            # Process batch
-            try:
-                results = rf.batch_processor.process_batch(
-                    batch_blocks,
-                    mtf_levels=[p[0] for p in batch_params],
-                    cuts=[True] * len(batch_items)
-                )
-                
-                # Output results in order
-                for (blocknum, block, mtf, request), result in zip(batch_items, results):
-                    output = {}
-                    output["demod"] = result
-                    output["MTF"] = mtf
-                    output["request"] = request
-                    self.q_out.put((blocknum, output))
-                    
-            except Exception as e:
-                # Fallback to individual processing
-                logger.error(f"Batch processing failed: {e}, falling back to individual processing")
-                import traceback
-                traceback.print_exc()
-                
-                for blocknum, block, mtf, request in batch_items:
-                    try:
-                        # Process individually using CPU fallback
-                        if "fft" not in block:
-                            import numpy.fft as npfft
-                            fftdata = npfft.fft(block["rawinput"])
-                        else:
-                            fftdata = block["fft"]
-                            
-                        output = {}
-                        output["demod"] = rf.demodblock(
-                            data=block["rawinput"],
-                            fftdata=fftdata,
-                            mtf_level=mtf,
-                            cut=True
-                        )
-                        output["MTF"] = mtf
-                        output["request"] = request
-                        self.q_out.put((blocknum, output))
-                    except Exception as e2:
-                        logger.error(f"Individual fallback also failed for block {blocknum}: {e2}")
-                        # Put empty result to avoid blocking
-                        self.q_out.put((blocknum, {}))
-            
-            # Clear batch for next iteration
-            batch_items = []
-            batch_blocks = []
-            batch_params = []
 
     @profile
     def doread(self, blocknums, MTF, redo=False, prefetch=False):
@@ -1363,9 +1212,9 @@ class DemodCache:
         # transpose the cache by key, not block
         # This is a list of entries in the output from the threaded
         # demodblock function that if they exist is to be merged together
-        # to form contigous arrays for further processing. This excludes "fft"
+        # to form contiguous arrays for further processing. This excludes "fft"
         # as while that is contained in the output, it is only there so
-        # it can be re-used case mtf checking fails and is not used later and
+        # it can be reused case mtf checking fails and is not used later and
         # thus does not need to be concatenated.
         t = {"input": [], "video": [], "audio": [], "efm": [], "rfhpf": []}
 
@@ -1658,7 +1507,6 @@ class Field:
         self.linebad   = self.compute_deriv_error(self.linelocs2, self.linebad)
 
         self.linelocs  = self.linelocs2
-        self.wowfactor = self.computewow(self.linelocs)
 
         self.valid     = True
 
@@ -2248,12 +2096,9 @@ class Field:
             # Failed to find anything useful - the caller is expected to skip ahead and try again
             return None, None, None
 
-    def getpulses(self):
-        # pass one using standard levels
 
-        # pulse_hz range:  vsync_ire - 10, maximum is the 50% crossing point to sync
-        pulse_hz_min = self.rf.iretohz(self.rf.DecoderParams["vsync_ire"] - 10)
-        pulse_hz_max = self.rf.iretohz(self.rf.DecoderParams["vsync_ire"] / 2)
+    def getpulses(self, do_retry=True):
+        # pass one using standard levels
 
         pulse_hz_min = self.rf.iretohz(self.rf.DecoderParams["vsync_ire"] - 20)
         pulse_hz_max = self.rf.iretohz(-20)
@@ -2261,8 +2106,15 @@ class Field:
         pulses = findpulses(self.data["video"]["demod_05"], pulse_hz_min, pulse_hz_max)
 
         if len(pulses) == 0:
-            # can't do anything about this
-            return pulses
+            if not self.fields_written:
+                # if the first field decoded, recalibrate sync levels and retry
+                ire0 = np.percentile(self.data["video"]["demod_05"], 15)
+                self.rf.DecoderParams["ire0"] = ire0
+
+                return self.getpulses(do_retry=False)
+            else:
+                # otherwise, can't do anything about this
+                return pulses
 
         # determine sync pulses from vsync
         vsync_locs = []
@@ -2594,17 +2446,39 @@ class Field:
 
         return linelocs
 
-    def computewow(self, lineinfo):
-        wow = np.ones(len(lineinfo))
+    def computewow_scaled(self, kind='linear'):
+        """Compute how much the line deviates fron expected,
+           and scale input samples to output samples
+        """
+        actual_linelocs = np.array(self.linelocs, dtype=np.float64)
+        expected_linelocs = np.array([i * self.inlinelen for i in range(len(actual_linelocs))], dtype=np.float64)
 
-        for l in range(0, len(wow) - 1):
-            wow[l] = self.get_linelen(l) / self.inlinelen
+        outscale = self.inlinelen / self.outlinelen
+        outsamples = self.outlinecount * self.outlinelen
+        outline_offset = (self.lineoffset + 1) * self.outlinelen
 
-        # smooth out wow in the sync area
-        for l in range(self.lineoffset, self.lineoffset + 10):
-            wow[l] = np.median(wow[l : l + 4])
+        if kind == 'linear':
+            k=1
+            bc_type=None
+        elif kind == 'quadratic':
+            k=2
+            bc_type=None
+        elif kind == 'cubic':
+            k=3
+            bc_type='natural'
 
-        return wow
+        # create a spline that interpolates the exact sample value based on expected vs. actual line locations
+        spl = interpolate.make_interp_spline(expected_linelocs, actual_linelocs, k=k, bc_type=bc_type, check_finite=False)
+
+        # scale up to compute where the output pixel would fall on the interpolated line loc
+        scaled_pixel_locs = np.arange(outsamples + outline_offset) * outscale
+
+        # interpolate the expected pixel location
+        interpolated_pixel_locs = spl(scaled_pixel_locs)
+        # amount of wow for each scaled pixel
+        wowfactors = spl(scaled_pixel_locs, 1)
+
+        return interpolated_pixel_locs, wowfactors
 
     #@profile
     def downscale(
@@ -2638,7 +2512,7 @@ class Field:
             if not self.isFirstField:
                 linecount += self.rf.SysParams["field_lines"][0]
 
-            # Now compute the # of audio samples that should be written, and then the 
+            # Now compute the # of audio samples that should be written, and then the
             # location of that relative to the current line
             samples_per_line = (self.rf.SysParams['line_period'] / 1000000) / (1 / audio)
 
@@ -2647,7 +2521,7 @@ class Field:
 
             if audsamp_offset > .5:
                 audio_offset = (1 - audsamp_offset) * (1 / audio)
-            else: 
+            else:
                 audio_offset = -audsamp_offset * (1 / audio)
         else:
             # Either analog audio is disabled, or we're using hsync-locked sampling
@@ -2672,30 +2546,16 @@ class Field:
                 # return values will still be in audio_rv later
                 downscale_audio(*dsa_args)
 
-        dsout = np.zeros((linesout * outwidth), dtype=np.double)
-        # self.lineoffset is an adjustment for 0-based lines *before* downscaling so add 1 here
-        lineoffset = self.lineoffset + 1
-
-        for l in range(lineoffset, linesout + lineoffset):
-            if lineinfo[l + 1] > lineinfo[l]:
-                scaled = scale(
-                    self.data["video"][channel],
-                    lineinfo[l],
-                    lineinfo[l + 1],
-                    outwidth,
-                    self.wowfactor[l],
-                )
-
-                dsout[
-                    (l - lineoffset) * outwidth : (l + 1 - lineoffset) * outwidth
-                ] = scaled
-            else:
-                # Massive TBC error detected
-                self.sync_confidence = 1
-                #logger.warning("WARNING: TBC failure at line %d", l)
-                dsout[
-                    (l - lineoffset) * outwidth : (l + 1 - lineoffset) * outwidth
-                ] = self.rf.DecoderParams["ire0"]
+        dsout = np.zeros((linesout * outwidth), dtype=np.float32)
+        interpolated_pixel_locs, wowfactors = self.computewow_scaled()
+        scale_field(
+            self.data["video"][channel].astype(np.float32, copy=False),
+            dsout,
+            interpolated_pixel_locs,
+            wowfactors,
+            self.lineoffset,
+            outwidth,
+        )
 
         if self.rf.decode_digital_audio:
             self.efmout = self.data["efm"][
@@ -2917,7 +2777,7 @@ class Field:
         errlistc = errlist.copy()
         lineoffset = -field.lineoffset
 
-        # Remove dropouts occuring before the start of the frame so they don't
+        # Remove dropouts occurring before the start of the frame so they don't
         # cause the rest to be skipped
         curerr = errlistc.pop(0)
         while len(errlistc) > 0 and curerr[0] < field.linelocs[field.lineoffset]:
@@ -3221,7 +3081,6 @@ class FieldPAL(Field):
         self.linelocs3a = self.refine_linelocs_pilot(self.linelocs3)
         self.linelocs = self.fix_badlines(self.linelocs3a)
 
-        self.wowfactor = self.computewow(self.linelocs)
         self.burstmedian = self.calc_burstmedian()
 
         self.linecount = 312 if self.isFirstField else 313
@@ -3490,8 +3349,6 @@ class FieldNTSC(Field):
         shift33 = 83 * (np.pi / 180)
         self.linelocs = self.apply_offsets(self.linelocs4, -shift33 - 0)
 
-        self.wowfactor = self.computewow(self.linelocs)
-
 
 class LDdecode:
     def __init__(
@@ -3530,6 +3387,9 @@ class LDdecode:
 
         self.blackIRE = 0
 
+
+        self.start_time = time.time()
+        self.second_decode = None
         self.use_profiler = extra_options.get("use_profiler", False)
         if self.use_profiler:
             from line_profiler import LineProfiler
@@ -3628,7 +3488,7 @@ class LDdecode:
 
         self.doDOD = doDOD
 
-        self.fieldinfo = []
+        self.fieldinfo = FieldInfo()
 
         self.leadIn = False
         self.leadOut = False
@@ -3640,23 +3500,8 @@ class LDdecode:
 
         self.verboseVITS = False
 
-        # Extract batch processing options from extra_options
-        use_batch_processing = extra_options.get("use_batch_processing", False)
-        batch_size = extra_options.get("batch_size", None)
-        
-        # Use batch size from RF decoder if available and not explicitly set
-        if batch_size is None and hasattr(self.rf, 'batch_size'):
-            batch_size = self.rf.batch_size
-        
-        # Default to 10 if still not set
-        if batch_size is None:
-            batch_size = 10
-        
         self.demodcache = DemodCache(
-            self.rf, self.infile, self.freader, self.rf_opts, 
-            num_worker_threads=self.numthreads,
-            use_batch_processing=use_batch_processing,
-            batch_size=batch_size
+            self.rf, self.infile, self.freader, self.rf_opts, num_worker_threads=self.numthreads
         )
 
         self.bw_ratios = []
@@ -3692,6 +3537,8 @@ class LDdecode:
 
         if self.use_profiler:
             self.lpf.print_stats()
+
+        self.print_stats()
 
     def roughseek(self, location, isField=True):
         self.prevPhaseID = None
@@ -3729,10 +3576,10 @@ class LDdecode:
             cut = field.data['video']['demod'][ls]
             freq = np.percentile(cut, 50 if len(wl) == 3 else wl[3])
             freq_ire = field.rf.hztoire(freq, spec=True)
-            
+
             if inrange(freq_ire, 95, 110):
                 ire100_hzs.append(freq)
-            
+
         for l in range(12, self.output_lines):
             lsa = field.lineslice(l, 0.25, 4)
 
@@ -3768,7 +3615,7 @@ class LDdecode:
             fftdata = np.fft.fft(blk)
             filtdata = np.fft.ifft(fftdata * self.rf.Filters['AC3']).real
             odata = self.AC3Collector.cut(filtdata)
-            odata = np.clip(odata / 64, -100, 100) 
+            odata = np.clip(odata / 64, -100, 100)
 
             self.outfile_ac3.write(np.int8(odata))
 
@@ -3815,7 +3662,7 @@ class LDdecode:
 
         rv['field'] = None
         rv['offset'] = None
-    
+
         readloc = int(start - self.rf.blockcut)
         if readloc < 0:
             readloc = 0
@@ -3833,7 +3680,7 @@ class LDdecode:
         if rawdecode is None:
             # logger.info("Failed to demodulate data")
             return None, None
-        
+
         f = self.FieldClass(
             self.rf,
             rawdecode,
@@ -3842,6 +3689,9 @@ class LDdecode:
             fields_written=self.fields_written,
             readloc=rawdecode["startloc"],
         )
+
+        # set an object-level variable to make notebook debugging easier
+        self.curfield = f
 
         if self.use_profiler:
             if self.system == 'NTSC':
@@ -3889,6 +3739,9 @@ class LDdecode:
             self.fieldstack.pop(-1)
 
         while done is False:
+            if self.second_decode is None and self.fields_written:
+                self.second_decode = time.time()
+
             if redo:
                 # Drop existing thread
                 self.decodethread = None
@@ -3907,7 +3760,7 @@ class LDdecode:
                 # ... but if the first call, this is empty
                 if len(self.threadreturn) > 0:
                     f, offset = self.threadreturn['field'], self.threadreturn['offset']
-            
+
             # Start new thread
             self.threadreturn = {}
             if f and f.valid:
@@ -3927,7 +3780,7 @@ class LDdecode:
                 self.decodethread.start()
             else:
                 self.decodefield(*df_args)
-            
+
             # process previous run
             if f:
                 self.fdoffset += offset
@@ -3939,8 +3792,8 @@ class LDdecode:
                 # Downscaling is time consuming, but currently things are
                 # blocking on the decode thread started above finishing
                 picture, audio, efm = f.downscale(
-                    linesout=self.output_lines, 
-                    final=True, 
+                    linesout=self.output_lines,
+                    final=True,
                     audio=self.analog_audio,
                     lastfieldwritten=self.lastFieldWritten,
                 )
@@ -3991,7 +3844,7 @@ class LDdecode:
                     done = True
                     fieldlength = f.linelocs[self.output_lines] - f.linelocs[0]
                     fieldlength /= f.inlinelen
-                    if ((f.sync_confidence < 50) and not 
+                    if ((f.sync_confidence < 50) and not
                          inrange(fieldlength, self.output_lines - 2, self.output_lines + 2)):
                         logger.warning("WARNING: Possible player skip detected - check output")
 
@@ -4006,7 +3859,7 @@ class LDdecode:
 
         if f is None or f.valid is False:
             return None
-        
+
         if f is not None and self.fname_out is not None:
             # Only write a FirstField first
             if len(self.fieldinfo) == 0 and not f.isFirstField:
@@ -4029,6 +3882,18 @@ class LDdecode:
             self.writeout(self.lastvalidfield[f.isFirstField])
 
         return f
+    
+    def print_stats(self):
+        if self.fields_written:
+            timeused = time.time() - self.start_time
+            timeused2 = time.time() - self.second_decode
+            frames = self.fields_written // 2
+            fps = frames / timeused2
+
+            print(
+                f"Took {timeused:.2f} seconds to decode {frames} frames ({fps:.2f} FPS post-setup)",
+                file=sys.stderr,
+            )
 
     def decodeFrameNumber(self, f1, f2):
         """ decode frame #/information from Philips code data on both fields """
@@ -4124,7 +3989,7 @@ class LDdecode:
 
         if f.isFirstField:
             # compute IRE50 from field1 l13
-            # Unforunately this is too short to get a 50IRE RF level
+            # Unfortunately this is too short to get a 50IRE RF level
             wl_slice = f.lineslice_tbc(13, 4.7 + 15.5, 3)
             metrics["greyPSNR"] = self.calcpsnr(f, wl_slice)
             metrics["greyIRE"] = nb_mean(f.output_to_ire(f.dspicture[wl_slice]))
@@ -4358,7 +4223,7 @@ class LDdecode:
                         outstr += f"Timecode {disk_TimeCode} "
                     elif disk_Frame:
                         outstr += f"Frame #{disk_Frame} "
-                        
+
 
                     if special is not None:
                         outstr += special
@@ -4508,7 +4373,5 @@ class LDdecode:
         ))
 
         jout["videoParameters"] = vp
-
-        jout["fields"] = self.fieldinfo.copy()
 
         return jout

@@ -73,7 +73,7 @@ public:
      */
     std::vector<RealArray> scaleField(
         const RealArray& input,
-        const std::vector<size_t>& lineStarts,
+        const std::vector<double>& lineStarts,
         size_t numLines);
     
     /**

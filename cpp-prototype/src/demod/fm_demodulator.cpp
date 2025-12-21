@@ -2,6 +2,8 @@
 #include "vhsdecode/fm_demodulator.hpp"
 #include <cmath>
 #include <algorithm>
+#include <iostream>
+#include <iomanip>
 
 namespace vhsdecode {
 namespace demod {
@@ -10,6 +12,7 @@ class FMDemodulator::Impl {
 public:
     ProcessingConfig config;
     static constexpr float TAU = 2.0f * static_cast<float>(M_PI);
+    bool debugPrinted = false;
     
     explicit Impl(const ProcessingConfig& cfg) : config(cfg) {}
     
@@ -33,30 +36,77 @@ public:
             dangles[i] = currAngle - prevAngle;
         }
         
-        // Step 3: np.unwrap() on differences
-        // np.unwrap corrects for 2π discontinuities cumulatively
-        // For each sample, if the jump from previous is > π, subtract 2π
-        // if jump < -π, add 2π
-        // For phase differences that are already per-sample, this is equivalent
-        // to bringing each sample into [-π, π]
-        for (size_t i = 0; i < N; ++i) {
-            while (dangles[i] > static_cast<float>(M_PI)) {
-                dangles[i] -= TAU;
+        // Debug: print phase differences before unwrap
+        if (!debugPrinted) {
+            debugPrinted = true;
+            std::cout << "\n=== FM Demod Debug (first block) ===\n";
+            std::cout << "dangles BEFORE unwrap (first 20): [";
+            for (size_t i = 0; i < 20 && i < N; ++i) {
+                std::cout << std::fixed << std::setprecision(4) << dangles[i];
+                if (i < 19) std::cout << ", ";
             }
-            while (dangles[i] < -static_cast<float>(M_PI)) {
-                dangles[i] += TAU;
+            std::cout << "]\n";
+            std::cout << "dangles min: " << *std::min_element(dangles.begin(), dangles.end()) << ", ";
+            std::cout << "max: " << *std::max_element(dangles.begin(), dangles.end()) << "\n";
+        }
+        
+        // Make sure unwrapping goes the right way (Python check)
+        if (dangles[0] < -static_cast<float>(M_PI)) {
+            dangles[0] += TAU;
+        }
+        
+        // Step 3: np.unwrap() - adjust consecutive values to differ by < π
+        // numpy.unwrap makes phase differences continuous by adding/subtracting 2π
+        // to each element so that consecutive values differ by less than π
+        for (size_t i = 1; i < N; ++i) {
+            float diff = dangles[i] - dangles[i-1];
+            // Wrap diff to [-π, π]
+            float wrappedDiff = std::fmod(diff + static_cast<float>(M_PI), TAU);
+            if (wrappedDiff < 0) {
+                wrappedDiff += TAU;
             }
+            wrappedDiff -= static_cast<float>(M_PI);
+            // Adjust dangles[i] by the difference
+            dangles[i] = dangles[i-1] + wrappedDiff;
+        }
+        
+        // Debug: print after unwrap, before clamp
+        static bool debugAfterUnwrap = false;
+        if (!debugAfterUnwrap) {
+            debugAfterUnwrap = true;
+            std::cout << "dangles AFTER unwrap (first 20): [";
+            for (size_t i = 0; i < 20 && i < N; ++i) {
+                std::cout << std::fixed << std::setprecision(4) << dangles[i];
+                if (i < 19) std::cout << ", ";
+            }
+            std::cout << "]\n";
+            std::cout << "After unwrap min: " << *std::min_element(dangles.begin(), dangles.end()) << ", ";
+            std::cout << "max: " << *std::max_element(dangles.begin(), dangles.end()) << "\n";
         }
         
         // Step 4: Clamp to [0, tau] for bad data
         // "With extremely bad data, the unwrapped angles can jump"
-        for (size_t i = 0; i < N; ++i) {
-            while (dangles[i] < 0.0f) {
-                dangles[i] += TAU;
+        float minVal = *std::min_element(dangles.begin(), dangles.end());
+        float maxVal = *std::max_element(dangles.begin(), dangles.end());
+        
+        // Python: while np.min(dangles) < 0: dangles[dangles < 0] += tau
+        while (minVal < 0.0f) {
+            for (size_t i = 0; i < N; ++i) {
+                if (dangles[i] < 0.0f) {
+                    dangles[i] += TAU;
+                }
             }
-            while (dangles[i] > TAU) {
-                dangles[i] -= TAU;
+            minVal = *std::min_element(dangles.begin(), dangles.end());
+        }
+        
+        // Python: while np.max(dangles) > tau: dangles[dangles > tau] -= tau
+        while (maxVal > TAU) {
+            for (size_t i = 0; i < N; ++i) {
+                if (dangles[i] > TAU) {
+                    dangles[i] -= TAU;
+                }
             }
+            maxVal = *std::max_element(dangles.begin(), dangles.end());
         }
         
         // Step 5: Scale to frequency in Hz

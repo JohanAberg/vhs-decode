@@ -1,5 +1,5 @@
 from multiprocessing.shared_memory import SharedMemory
-from numba import njit, prange, vectorize
+from numba import njit
 import numba
 import numpy as np
 from dataclasses import dataclass
@@ -20,7 +20,7 @@ NumbaBlockArray = numba.types.Array(numba.types.int16, 1, "C", aligned=True)
 
 @dataclass
 class DecoderState:
-    def __init__(self, decoder, buffer_name, block_size, block_num, is_last_block):
+    def __init__(self, decoder, buffer_name, block_frames_read, block_size, block_num, is_last_block):
         block_sizes = decoder.set_block_sizes(block_size)
         block_overlap = decoder.get_block_overlap()
 
@@ -29,6 +29,7 @@ class DecoderState:
         self.is_last_block = is_last_block
 
         # block data for input rf
+        self.block_frames_read = block_frames_read
         self.block_dtype = np.int16
         self.block_size = block_sizes["block_size"]
         self.block_overlap = block_overlap["block_overlap"]
@@ -41,14 +42,12 @@ class DecoderState:
         # block data for resampled audio @ user set audio rate
         self.block_audio_final_size = block_sizes["block_audio_final_size"]
         self.block_audio_final_overlap = block_overlap["block_audio_final_overlap"]
-        self.block_audio_final_len = (
-            self.block_audio_final_size - self.block_audio_final_overlap * 2
-        )
 
     name: str
     block_num: int
     is_last_block: bool
 
+    block_frames_read: int
     block_dtype: np.dtype
     block_size: int
     block_overlap: int
@@ -59,7 +58,17 @@ class DecoderState:
 
     block_audio_final_size: int
     block_audio_final_overlap: int
-    block_audio_final_len: int
+        
+    @property
+    def block_audio_final_len(self):
+        if self.is_last_block:
+            # shrink the final stereo output to only include the actual frames read, and the overlap that would have been used for the next block
+            rf_rate_to_final_rate_ratio = self.block_size / self.block_audio_final_size
+            audio_size = round(self.block_frames_read / rf_rate_to_final_rate_ratio)
+            return max(50, audio_size + self.block_audio_final_overlap)
+        else:
+            # don't allow 0 or negative length audio, even if there's more overlap than actual audio
+            return max(50, self.block_audio_final_size - self.block_audio_final_overlap * 2)
 
 
 def to_aligned_offset(size):
@@ -67,12 +76,6 @@ def to_aligned_offset(size):
     offset = size % alignment
     aligned_size = 0 if offset == 0 else alignment - offset
     return size + aligned_size
-
-
-def get_aligned_address(variable):
-    address = id(variable)
-    aligned_address = to_aligned_offset(address)
-    return address, aligned_address
 
 
 class PostProcessorSharedMemory:
@@ -90,7 +93,7 @@ class PostProcessorSharedMemory:
         self.audio_dtype_item_size = np.dtype(self.audio_dtype).itemsize
 
         ### Post Processing Memory
-        # |--pre_left--|--pre_right--|--nr_left--|--nr_right--|
+        # |--pre_left--|--pre_right--|--post_left--|--post_right--|
         # |-----------stereo---------|
 
         # pre left
@@ -110,23 +113,23 @@ class PostProcessorSharedMemory:
 
         ## noise reduction out
         # left
-        self.l_nr_offset = to_aligned_offset(
+        self.l_post_offset = to_aligned_offset(
             max(
                 self.stereo_offset + self.stereo_bytes,
                 self.r_pre_offset + self.r_pre_bytes,
             )
         )
-        self.l_nr_len = self.channel_len
-        self.l_nr_bytes = self.l_nr_len * self.audio_dtype_item_size
+        self.l_post_len = self.channel_len
+        self.l_post_bytes = self.l_post_len * self.audio_dtype_item_size
         # right
-        self.r_nr_offset = to_aligned_offset(self.l_nr_offset + self.l_nr_bytes)
-        self.r_nr_len = self.channel_len
-        self.r_nr_bytes = self.r_nr_len * self.audio_dtype_item_size
+        self.r_post_offset = to_aligned_offset(self.l_post_offset + self.l_post_bytes)
+        self.r_post_len = self.channel_len
+        self.r_post_bytes = self.r_post_len * self.audio_dtype_item_size
 
     @staticmethod
-    def get_shared_memory(channel_len, name, audio_dtype=REAL_DTYPE):
+    def get_shared_memory(channel_size, name, audio_dtype=REAL_DTYPE):
         byte_size = (
-            to_aligned_offset(channel_len * np.dtype(audio_dtype).itemsize * 4)
+            to_aligned_offset(channel_size * np.dtype(audio_dtype).itemsize * 4)
             + ALIGNMENT * 16
         )
 
@@ -167,19 +170,19 @@ class PostProcessorSharedMemory:
             buffer=self.buf,
         )
 
-    def get_nr_left(self) -> np.array:
+    def get_post_left(self) -> np.array:
         return np.ndarray(
-            self.l_nr_len,
+            self.l_post_len,
             dtype=self.audio_dtype,
-            offset=self.l_nr_offset,
+            offset=self.l_post_offset,
             buffer=self.buf,
         )
 
-    def get_nr_right(self) -> np.array:
+    def get_post_right(self) -> np.array:
         return np.ndarray(
-            self.r_nr_len,
+            self.r_post_len,
             dtype=self.audio_dtype,
-            offset=self.r_nr_offset,
+            offset=self.r_post_offset,
             buffer=self.buf,
         )
 
@@ -200,31 +203,24 @@ class DecoderSharedMemory:
         self.audio_dtype = decoder_state.audio_dtype
         self.audio_dtype_item_size = np.dtype(self.audio_dtype).itemsize
 
-        self.block_audio_len = decoder_state.block_audio_size
+        self.block_audio_final_len = decoder_state.block_audio_final_len
 
         ### Decoder Memory
-        # |--pre_left--|--pre_right--|-------------------------------raw_data-------------------------------|
-        # |--pre_left--|--pre_right--|----------------------------block_resampled---------------------------|
-
-        # pre left
-        self.l_pre_offset = 0
-        self.l_pre_len = decoder_state.block_audio_size
-        self.l_pre_bytes = self.l_pre_len * self.audio_dtype_item_size
-        # pre right
-        self.r_pre_offset = to_aligned_offset(self.l_pre_offset + self.l_pre_bytes)
-        self.r_pre_len = decoder_state.block_audio_size
-        self.r_pre_bytes = self.r_pre_len * self.audio_dtype_item_size
+        # -------------------------------raw_data-------------------------------|
+        # RF data is demodulated and raw data can be discarded
+        # Output audio data overwrites where the raw data was
+        # |--pre_left--|--pre_right--|-------------------empty------------------|
+        # |--pre_left--|--pre_right--|-------------------empty------------------|
 
         ## raw data in
         # first overlap
-        self.block_start_overlap_offset = to_aligned_offset(
-            self.r_pre_offset + self.r_pre_bytes
-        )
+        self.block_start_overlap_offset = 0
         self.block_start_overlap_len = decoder_state.block_read_overlap
         self.block_start_overlap_bytes = (
             self.block_start_overlap_len * self.block_dtype_item_size
         )
         # block data
+        self.block_frames_read = decoder_state.block_frames_read
         self.block_offset = (
             self.block_start_overlap_offset + self.block_start_overlap_bytes
         )
@@ -239,26 +235,30 @@ class DecoderSharedMemory:
             self.block_end_overlap_len * self.block_dtype_item_size
         )
 
+        # pre left
+        self.l_pre_offset = 0
+        self.l_pre_len = self.block_audio_final_len
+        self.l_pre_bytes = self.l_pre_len * self.audio_dtype_item_size
+        # pre right
+        self.r_pre_offset = to_aligned_offset(self.l_pre_offset + self.l_pre_bytes)
+        self.r_pre_len = self.block_audio_final_len
+        self.r_pre_bytes = self.r_pre_len * self.audio_dtype_item_size
+
     @staticmethod
     def get_shared_memory(
         block_size,
-        block_audio_size,
-        block_audio_overlap,
+        block_overlap,
+        block_audio_final_size,
         name,
         block_dtype=np.int16,
         audio_dtype=REAL_DTYPE,
     ):
-        max_audio_size = (block_audio_size * np.dtype(audio_dtype).itemsize) * 6
-        block_size_with_audio = (
-            to_aligned_offset(block_size * np.dtype(block_dtype).itemsize)
-            + to_aligned_offset(
-                ((block_audio_overlap * 4) + block_audio_size)
-                * np.dtype(audio_dtype).itemsize
-            )
-            * 2
-        )
+        max_audio_size = (
+            block_audio_final_size + to_aligned_offset(block_audio_final_size)
+        ) * np.dtype(audio_dtype).itemsize
+        block_size = (block_size + block_overlap * 2) * np.dtype(block_dtype).itemsize
 
-        byte_size = max(max_audio_size, block_size_with_audio) + ALIGNMENT * 16
+        byte_size = max(max_audio_size, block_size)
 
         # allow more than one instance to run at a time
         system_random = SystemRandom()
@@ -282,12 +282,17 @@ class DecoderSharedMemory:
             offset=self.block_start_overlap_offset,
             buffer=self.buf,
         )
+    
+    # block data only including the data that was read
+    def get_last_block(self) -> np.array:
+        return np.ndarray(
+            self.block_start_overlap_len + self.block_frames_read,
+            dtype=self.block_dtype,
+            offset=self.block_start_overlap_offset,
+            buffer=self.buf,
+        )
 
-    # first block includes start since there is no overlap
-    def get_first_block_in(self) -> np.array:
-        return self.get_block()
-
-    # block starts after first overlap, goes until after the last overlap
+    # block starts after first overlap, goes until the end of the last overlap
     # first part of the block is copied from the previous read
     def get_block_in(self) -> np.array:
         return np.ndarray(
@@ -317,7 +322,7 @@ class DecoderSharedMemory:
 
     def get_pre_left(self) -> np.array:
         return np.ndarray(
-            self.block_audio_len,
+            self.block_audio_final_len,
             dtype=self.audio_dtype,
             offset=self.l_pre_offset,
             buffer=self.buf,
@@ -325,7 +330,7 @@ class DecoderSharedMemory:
 
     def get_pre_right(self) -> np.array:
         return np.ndarray(
-            self.block_audio_len,
+            self.block_audio_final_len,
             dtype=self.audio_dtype,
             offset=self.r_pre_offset,
             buffer=self.buf,
@@ -371,6 +376,24 @@ class DecoderSharedMemory:
         nogil=True,
     )
     def copy_data_dst_offset_int16(
+        src: np.array, dst: np.array, dst_offset: int, length: int
+    ):
+        for i in range(length):
+            dst[i + dst_offset] = src[i]
+
+    @staticmethod
+    @njit(
+        numba.types.void(
+            NumbaAudioArray,
+            NumbaAudioArray,
+            numba.types.int64,
+            numba.types.int64,
+        ),
+        cache=True,
+        fastmath=True,
+        nogil=True,
+    )
+    def copy_data_dst_offset_float32(
         src: np.array, dst: np.array, dst_offset: int, length: int
     ):
         for i in range(length):

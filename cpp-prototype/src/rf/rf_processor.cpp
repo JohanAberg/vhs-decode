@@ -3,6 +3,8 @@
 #include <stdexcept>
 #include <cmath>
 #include <algorithm>
+#include <iostream>
+#include <iomanip>
 
 namespace vhsdecode {
 namespace rf {
@@ -67,10 +69,15 @@ RFProcessor::RFProcessor(const Config& config)
     filterBank_ = std::make_unique<FilterBank>(config_.sampleRateMHz, config_.blockSize);
     hilbert_ = std::make_unique<HilbertTransform>(config_.blockSize);
     
-    // Create default RF bandpass filter
-    filterBank_->createBandpassFilter("rf_bandpass", 
-                                     config_.rfBandpassLowMHz,
-                                     config_.rfBandpassHighMHz);
+    // Create RF bandpass filter matching Python VHS PAL configuration:
+    // Python uses separate HPF and LPF with high orders instead of a single BPF
+    // - video_hpf_extra = 1.32 MHz, order 12
+    // - video_lpf_extra = 5.91 MHz, order 20
+    filterBank_->createButterworthLPF("rf_lpf", 5.91, 20);  // 5.91 MHz LPF order 20
+    filterBank_->createButterworthHPF("rf_hpf", 1.32, 12);  // 1.32 MHz HPF order 12
+    
+    // Create combined bandpass filter by multiplying HPF * LPF
+    filterBank_->createCombinedFilter("rf_bandpass", "rf_hpf", "rf_lpf");
 }
 
 RFProcessor::~RFProcessor() = default;
@@ -92,6 +99,19 @@ RealArray RFProcessor::uint8ToFloat(const std::vector<uint8_t>& data) {
 RFProcessor::Result RFProcessor::processBlock(const RealArray& rfData) {
     if (rfData.size() != config_.blockSize) {
         throw std::invalid_argument("RF data size doesn't match block size");
+    }
+    
+    // Debug: print input data (only for first few calls)
+    static int debugCount = 0;
+    if (debugCount < 2) {
+        std::cout << "\n=== RF Input Debug (call #" << debugCount << ") ===\n";
+        std::cout << "Input first 10: [";
+        for (size_t i = 0; i < 10 && i < rfData.size(); ++i) {
+            std::cout << std::fixed << std::setprecision(4) << rfData[i];
+            if (i < 9) std::cout << ", ";
+        }
+        std::cout << "]\n";
+        debugCount++;
     }
     
     Result result;
@@ -126,6 +146,28 @@ RFProcessor::Result RFProcessor::processBlock(const RealArray& rfData) {
     complexFFT(fullSpectrum, true);
     for (size_t i = 0; i < N; ++i) {
         result.analyticSignal[i] = fullSpectrum[i];
+    }
+    
+    // Debug: print analytic signal
+    static int debugAnalyticCount = 0;
+    if (debugAnalyticCount < 2) {
+        std::cout << "=== RF Processor Debug (call #" << debugAnalyticCount << ") ===\n";
+        std::cout << "Analytic signal first 10: [";
+        for (size_t i = 0; i < 10 && i < N; ++i) {
+            std::cout << "(" << std::fixed << std::setprecision(4) << result.analyticSignal[i].real() << "+" 
+                      << result.analyticSignal[i].imag() << "j)";
+            if (i < 9) std::cout << ", ";
+        }
+        std::cout << "]\n";
+        
+        // Compute and print phase angles
+        std::cout << "Phase angles first 10: [";
+        for (size_t i = 0; i < 10 && i < N; ++i) {
+            std::cout << std::fixed << std::setprecision(4) << std::arg(result.analyticSignal[i]);
+            if (i < 9) std::cout << ", ";
+        }
+        std::cout << "]\n";
+        debugAnalyticCount++;
     }
     
     // Step 5: Compute envelope

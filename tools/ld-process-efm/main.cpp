@@ -33,8 +33,9 @@
 
 int main(int argc, char *argv[])
 {
-    //set 'binary mode' for stdin and stdout on windows
+    // Set 'binary mode' for stdin and stdout on Windows
     setBinaryMode();
+
     // Install the local debug message handler
     setDebug(true);
     qInstallMessageHandler(debugOutputHandler);
@@ -89,7 +90,7 @@ int main(int argc, char *argv[])
                                        QCoreApplication::translate("main", "Non-standard audio decode (no time-stamp information)"));
     parser.addOption(noTimeStampOption);
 
-    // Detailed debuging options
+    // Detailed debugging options
     QCommandLineOption debug_efmToF3FramesOption(QStringList() << "debug-efmtof3frames",
                                        QCoreApplication::translate("main", "Show EFM To F3 frame decode detailed debug"));
     parser.addOption(debug_efmToF3FramesOption);

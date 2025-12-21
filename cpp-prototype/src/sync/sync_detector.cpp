@@ -80,7 +80,9 @@ std::vector<Pulse> SyncDetector::findPulses(const RealArray& video, float syncTh
 
 std::vector<LineInfo> SyncDetector::computeLineLocations(
     const std::vector<Pulse>& pulses,
-    double expectedLineLength) 
+    double expectedLineLength,
+    const RealArray& video,
+    float syncThreshold) 
 {
     std::vector<LineInfo> lineLocations;
     
@@ -108,10 +110,24 @@ std::vector<LineInfo> SyncDetector::computeLineLocations(
     }
     
     // Filter pulses to likely horizontal syncs (not vsync or eq pulses)
-    std::vector<const Pulse*> hsyncCandidates;
+    struct HSyncCandidate {
+        const Pulse* pulse;
+        double refinedStart;
+    };
+
+    std::vector<HSyncCandidate> hsyncCandidates;
+    size_t searchBack = static_cast<size_t>(std::max(1.0, config_.sampleRateMHz)); // ~1 µs
+    size_t searchRange = static_cast<size_t>(config_.hsyncSamples() * 2.0); // window around hsync
+
     for (const auto& pulse : pulses) {
         if (pulse.length >= minHsyncLen && pulse.length <= maxHsyncLen) {
-            hsyncCandidates.push_back(&pulse);
+            // Refine start using zero-crossing on the demod signal
+            size_t startPos = (pulse.start > searchBack) ? pulse.start - searchBack : 0;
+            double refined = findSyncEdge(video, startPos, syncThreshold, searchRange);
+            if (refined < 0) {
+                refined = static_cast<double>(pulse.start);
+            }
+            hsyncCandidates.push_back({&pulse, refined});
         }
     }
     
@@ -126,7 +142,7 @@ std::vector<LineInfo> SyncDetector::computeLineLocations(
     std::vector<double> lineLengths;
     int validLineLengths = 0, invalidLineLengths = 0;
     for (size_t i = 1; i < hsyncCandidates.size(); ++i) {
-        double len = static_cast<double>(hsyncCandidates[i]->start - hsyncCandidates[i-1]->start);
+        double len = hsyncCandidates[i].refinedStart - hsyncCandidates[i-1].refinedStart;
         if (len >= minLineLen && len <= maxLineLen) {
             lineLengths.push_back(len);
             validLineLengths++;
@@ -150,8 +166,8 @@ std::vector<LineInfo> SyncDetector::computeLineLocations(
     // Build line locations using detected syncs
     size_t lineNum = 0;
     for (size_t i = 0; i < hsyncCandidates.size() - 1; ++i) {
-        double startPos = static_cast<double>(hsyncCandidates[i]->start);
-        double lineLen = static_cast<double>(hsyncCandidates[i+1]->start - hsyncCandidates[i]->start);
+        double startPos = hsyncCandidates[i].refinedStart;
+        double lineLen = hsyncCandidates[i+1].refinedStart - hsyncCandidates[i].refinedStart;
         
         // Check if this is a valid line length
         bool valid = (lineLen >= minLineLen && lineLen <= maxLineLen);
@@ -162,7 +178,7 @@ std::vector<LineInfo> SyncDetector::computeLineLocations(
     
     // Add last line with estimated length
     if (!hsyncCandidates.empty()) {
-        double lastStart = static_cast<double>(hsyncCandidates.back()->start);
+        double lastStart = hsyncCandidates.back().refinedStart;
         lineLocations.emplace_back(lineNum, lastStart, medianLineLen, true);
     }
     

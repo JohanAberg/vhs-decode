@@ -7,9 +7,9 @@ jobs:
   build-decode:
     strategy:
       matrix:
-        os: [macos-12, macos-14]
+        os: [macos-13, macos-14]
         include:
-          - os: macos-12
+          - os: macos-13
             arch: x86_64
           - os: macos-14
             arch: arm64
@@ -27,13 +27,17 @@ jobs:
         with:
           python-version: "3.12"
 
+      - uses: dtolnay/rust-toolchain@stable
+
       - name: Install dependencies
         run: brew install create-dmg
 
       - name: Build Python module
+        env:
+          SETUPTOOLS_RUST_CARGO_PROFILE: release
         run: |
           pip3 install ".[hifi_gui_qt6,hifi_gnuradio]" setuptools Cython pyinstaller -r ./requirements.txt
-          python3 setup.py build_ext --inplace
+          pip3 install -e .
 
       - name: Build binary
         run: |

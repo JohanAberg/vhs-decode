@@ -150,6 +150,7 @@ def plot_magnitude_density(
 
 def plot_input_data(
     raw_data,
+    filtered_data,
     raw_fft,
     filtered_fft,
     env,
@@ -181,6 +182,7 @@ def plot_input_data(
         #        ax1.plot(hilbert, color='#FF0000')
         blocklen = len(raw_data)
         ax1.plot(raw_data, color="#00FF00")
+        ax1.plot(filtered_data, color="#FF0000")
         ax1.plot(env, label="Envelope", color="#0000FF")
         if rfdecode.dod_options.dod_threshold_a:
             ax1.axhline(
@@ -309,6 +311,36 @@ def plot_luma_rf(rf, rf_luma_filter):
     col = "tab:green"
     ax2.set_ylabel("Phase (°)", color=col)
     ax2.plot(x, ph, color=col)
+    ax2.tick_params(axis="y", labelcolor=col)
+
+    fig.tight_layout()
+    plt.show()
+
+
+def plot_env_filter(env_filter1, env_filter2):
+    #    import math
+    import matplotlib.pyplot as plt
+    import numpy as np
+
+    x = np.linspace(0, 40, env_filter1.size)
+
+    mag = 20 * np.log10(np.absolute(env_filter1))
+    mag2 = 20 * np.log10(np.absolute(env_filter2))
+    # ph = np.angle(env_filter1, deg=True)
+
+    fig, ax1 = plt.subplots()
+
+    col = "tab:red"
+    ax1.set_xlabel("Frequenzy (MHz)")
+    ax1.set_ylabel("Magnetude (dB)", color=col)
+    ax1.plot(x, mag, color=col)
+    ax1.tick_params(axis="y", labelcolor=col)
+
+    ax2 = ax1.twinx()
+
+    col = "tab:green"
+    ax2.set_ylabel("Phase (°)", color=col)
+    ax2.plot(x, mag2, color=col)
     ax2.tick_params(axis="y", labelcolor=col)
 
     fig.tight_layout()

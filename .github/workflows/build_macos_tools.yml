@@ -11,9 +11,9 @@ jobs:
   build-tbc-tools:
     strategy:
       matrix:
-        os: [macos-12, macos-14]
+        os: [macos-13, macos-14]
         include:
-          - os: macos-12
+          - os: macos-13
             arch: x86_64
           - os: macos-14
             arch: arm64
@@ -35,7 +35,8 @@ jobs:
           cmake -B _build \
           -DCMAKE_BUILD_TYPE=Release \
           -DUSE_QT_VERSION=6 \
-          -DBUILD_PYTHON=false
+          -DBUILD_PYTHON=false \
+          -DBUILD_TESTING=OFF
 
           cmake --build _build
           cmake --install _build --prefix dist

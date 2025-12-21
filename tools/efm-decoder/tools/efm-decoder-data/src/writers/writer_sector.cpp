@@ -27,7 +27,7 @@
 // This writer class writes raw data to a file directly from the Data24 sections
 // This is (generally) used when the output is not stereo audio data
 
-WriterSector::WriterSector() { }
+WriterSector::WriterSector() : m_usingStdout(false) { }
 
 WriterSector::~WriterSector()
 {
@@ -38,12 +38,24 @@ WriterSector::~WriterSector()
 
 bool WriterSector::open(const QString &filename)
 {
-    m_file.setFileName(filename);
-    if (!m_file.open(QIODevice::WriteOnly)) {
-        qCritical() << "WriterSector::open() - Could not open file" << filename << "for writing";
-        return false;
+    if (filename == "-") {
+        // Use stdout
+        m_usingStdout = true;
+        if (!m_file.open(stdout, QIODevice::WriteOnly)) {
+            qCritical() << "WriterSector::open() - Could not open stdout for writing";
+            return false;
+        }
+        qDebug() << "WriterSector::open() - Opened stdout for data writing";
+    } else {
+        // Use regular file
+        m_usingStdout = false;
+        m_file.setFileName(filename);
+        if (!m_file.open(QIODevice::WriteOnly)) {
+            qCritical() << "WriterSector::open() - Could not open file" << filename << "for writing";
+            return false;
+        }
+        qDebug() << "WriterSector::open() - Opened file" << filename << "for data writing";
     }
-    qDebug() << "WriterSector::open() - Opened file" << filename << "for data writing";
     return true;
 }
 
@@ -65,15 +77,29 @@ void WriterSector::close()
         return;
     }
 
+    if (m_usingStdout) {
+        qDebug() << "WriterSector::close(): Closed stdout";
+    } else {
+        qDebug() << "WriterSector::close(): Closed the data file" << m_file.fileName();
+    }
     m_file.close();
-    qDebug() << "WriterSector::close(): Closed the data file" << m_file.fileName();
+    m_usingStdout = false;
 }
 
 qint64 WriterSector::size() const
 {
+    if (m_usingStdout) {
+        // Cannot determine size when writing to stdout
+        return -1;
+    }
     if (m_file.isOpen()) {
         return m_file.size();
     }
 
     return 0;
+}
+
+bool WriterSector::isStdout() const
+{
+    return m_usingStdout;
 }

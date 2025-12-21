@@ -199,6 +199,12 @@ void RFReader::seek(size_t position) {
 }
 
 RFBlock RFReader::readBlock(size_t blockSize, size_t blockNumber) {
+    // Seek to the correct position for this block
+    size_t blockOffset = blockNumber * blockSize;
+    if (blockOffset != position_) {
+        seek(blockOffset);
+    }
+    
     RFBlock block(blockSize, blockNumber, position_);
     
     size_t bytesToRead = std::min(blockSize, fileSize_ - position_);

@@ -1,16 +1,16 @@
 # A collection of helper functions used in dev notebooks and lddecode_core.py
 
 from collections import namedtuple
+import itertools
 import json
-from queue import Empty
 import math
 import os
 import subprocess
 import sys
 import traceback
+import signal
 
-from multiprocessing import JoinableQueue
-import threading
+from multiprocessing import Event, Pipe, Process
 
 from numba import jit, njit
 import numba
@@ -18,6 +18,7 @@ import numba
 # standard numeric/scientific libraries
 import numpy as np
 import scipy.signal as sps
+from scipy import interpolate
 
 # Try to make sure ffmpeg is available
 try:
@@ -66,6 +67,54 @@ def scale(buf, begin, end, tgtlen, mult=1):
         )
 
     return output
+
+
+# Scales and compensates for wow-induced playback-speed variations
+@njit(nogil=True, cache=True, fastmath=True)
+def scale_field(buf, dsout, interpolated_pixel_locs, wowfactors, lineoffset, outwidth, level_adjust_threshold = 15):
+    # Constants preserved as float32
+    point_5 = np.float32(0.5)
+    two = np.float32(2)
+    three = np.float32(3)
+    four = np.float32(4)
+    five = np.float32(5)
+
+    lineoffset += 1
+    lineoffset_out_samples = outwidth * lineoffset
+
+    # average out any unusual spikes in wow that happen on a per line basis
+    # this indicates an hsync tbc error vs. being normal wow from playback speed variations
+    # in this case for level adjusting we just want to fallback to the average wow to avoid a bright or dark line
+    median = np.median(wowfactors)
+    mad = np.median(np.abs(wowfactors - median)) # median absolute deviation
+    threshold = level_adjust_threshold * mad if mad > 0 else 0.001  # fallback for no variance
+
+    level_adjusts = np.where(
+        np.abs(wowfactors - median) > threshold,
+        median,
+        wowfactors
+    )
+
+    for i in range(lineoffset_out_samples, len(dsout) + lineoffset_out_samples):
+        # compensates for the amplitude/frequency shift caused by FM demodulation under varying playback speed.
+        level_adjust = level_adjusts[i]
+
+        # reconstructs the waveform at the proper fractional sample position, undoing wow-induced timing variations
+        coord = np.float32(interpolated_pixel_locs[i])
+        coord_int = int(coord)
+
+        # get the data from the buffer that aligns to the wow factor index
+        p0 = buf[coord_int - 1]
+        p1 = buf[coord_int]
+        p2 = buf[coord_int + 1]
+        p3 = buf[coord_int + 2]
+        x = np.float32(coord - coord_int)
+
+        # perform cubic scaling
+        a = p2 - p0
+        b = two * p0 - five * p1 + four * p2 - p3
+        c = three * (p1 - p2) + p3 - p0
+        dsout[i-lineoffset_out_samples] = level_adjust * (p1 + point_5 * x * (a + x * (b + x * c)))
 
 
 frequency_suffixes = [
@@ -129,11 +178,14 @@ def make_loader(filename, inputfreq=None):
             # Assume ffmpeg will recognise this format itself.
             input_args = []
 
-        # Use asetrate first to override the input file's sample rate.
-        output_args = [
-            "-filter:a",
-            "asetrate=" + str(inputfreq * 1e6) + ",aresample=" + str(40e6),
-        ]
+        output_args = []
+
+        if inputfreq != 40:
+            # Use asetrate first to override the input file's sample rate.
+            output_args = [
+                "-filter:a",
+                "asetrate=" + str(inputfreq * 1e6) + ",aresample=" + str(40e6),
+            ]
 
         return LoadFFmpeg(input_args=input_args, output_args=output_args)
 
@@ -216,7 +268,7 @@ def load_unpacked_data_float32(infile, sample, readlen):
     return load_unpacked_data(infile, sample, readlen, 4)
 
 
-# This is for the .r30 format I did in ddpack/unpack.c.  Depricated but I still have samples in it.
+# This is for the .r30 format I did in ddpack/unpack.c.  Deprecated but I still have samples in it.
 def load_packed_data_3_32(infile, sample, readlen):
     start = (sample // 3) * 4
     offset = sample % 3
@@ -524,24 +576,24 @@ def ldf_pipe(outname: str, compression_level: int = 6):
 def ac3_pipe(outname: str):
     processes = []
 
-    cmd1 = "sox -r 40000000 -b 8 -c 1 -e signed -t raw - -b 8 -r 46080000 -e unsigned -c 1 -t raw -"
-    cmd2 = "ld-ac3-demodulate -v 3 - -"
-    cmd3 = f"ld-ac3-decode - {outname}"
+    cmd1 = "sox -r 40000000 -b 8 -c 1 -e signed -t raw - -b 8 -r 46080000 -e unsigned -c 1 -t raw -".split()
+    cmd2 = "ld-ac3-demodulate -v 3 - -".split()
+    cmd3 = ["ld-ac3-decode", "-", outname]
 
-    logfp = open(f"{outname + '.log'}", 'w')
+    logfp = open(outname + '.log', 'w')
 
     # This is done in reverse order to allow for pipe building
-    processes.append(subprocess.Popen(cmd3.split(' '), 
+    processes.append(subprocess.Popen(cmd3,
                                       stdin=subprocess.PIPE,
                                       stdout=logfp,
                                       stderr=subprocess.STDOUT))
 
-    processes.append(subprocess.Popen(cmd2.split(' '), 
-                                      stdin=subprocess.PIPE, 
+    processes.append(subprocess.Popen(cmd2,
+                                      stdin=subprocess.PIPE,
                                       stdout=processes[-1].stdin))
 
-    processes.append(subprocess.Popen(cmd1.split(' '), 
-                                      stdin=subprocess.PIPE, 
+    processes.append(subprocess.Popen(cmd1,
+                                      stdin=subprocess.PIPE,
                                       stdout=processes[-1].stdin))
 
     return processes, processes[-1].stdin
@@ -1281,102 +1333,119 @@ def init_opencl(cl, name = None):
     #queue = cl.CommandQueue(ctx)
     return ctx
 
+class FieldInfo:
+    def __init__(self, field_history_size=3):
+        self._field_history_size = field_history_size
+        # store previous field references in a ring buffer
+        self._fieldinfo = np.empty(field_history_size, dtype=object)
+        self._fieldinfo_unsent = []
+        self._len = 0
 
-# Write the .tbc.json file (used by lddecode and notebooks)
-def write_json(ldd, jsondict, outname):
-    # Use UTF-8 and buffered writes to avoid cp1252 overhead and reduce syscall cost
-    indent = 4 if ldd.verboseVITS else None
-    separators = (",", ":") if not ldd.verboseVITS else None
+    def __len__(self):
+        return self._len
+    
+    # called like a normal python list, where -1 is the last element, -2 the one before that, etc.
+    # using [0] is not allowed since this only stores the end of the list
+    def __getitem__(self, key):
+        assert key < 0, "Attempted to get a field that has not been written"
+        assert key > -self._field_history_size, "Attempted to get a field that is not buffered"
+        return self._fieldinfo[(self._len + key) % self._field_history_size]
 
-    tmp_path = outname + ".tbc.json.tmp"
-    with open(tmp_path, "w", encoding="utf-8", buffering=1024 * 1024) as fp:
-        # Prefer orjson if available for speed; fall back to stdlib json
-        try:
-            import orjson
+    def read(self):
+        unsent = self._fieldinfo_unsent
+        self._fieldinfo_unsent = []
+        return unsent
+    
+    def append(self, value):
+        self._fieldinfo[self._len % self._field_history_size] = value
+        self._fieldinfo_unsent.append(value)
+        self._len += 1
 
-            fp.write(
-                orjson.dumps(
-                    jsondict,
-                    option=orjson.OPT_NON_STR_KEYS
-                    | orjson.OPT_SERIALIZE_NUMPY
-                    | (orjson.OPT_INDENT_2 if indent else 0),
-                ).decode("utf-8")
-            )
-            fp.write("\n")
-        except Exception:
-            json.dump(
-                jsondict,
-                fp,
-                allow_nan=False,
-                indent=indent,
-                separators=separators,
-                ensure_ascii=False,
-            )
-            fp.write("\n")
+class JSONDumper:
+    def __init__(self, ldd, outname):
+        self._rx, self._tx = Pipe(False)
+        self._writing = Event()
+        self._build_json = ldd.build_json
+        self._get_field_info = ldd.fieldinfo.read
 
-    os.replace(tmp_path, outname + ".tbc.json")
+        self._outname = outname
+        self._dumper = Process(target=JSONDumper._consume, args=(self._rx, self._writing, self._outname, ldd.verboseVITS,), name="lddecode-json-dumper")
+        self._dumper.start()
+    
+    def write(self):
+        if not self._writing.is_set():
+            json_data = self._build_json()
+            field_info = self._get_field_info()
+            self._tx.send(json_data)
+            self._tx.send(field_info)
 
+    def close(self):
+        json_data = self._build_json()
+        field_info = self._get_field_info()
+        self._tx.send(json_data)
+        self._tx.send(field_info)
 
-def jsondump_thread(ldd, outname):
-    """
-    This creates a background thread to write a json dict to a file.
+        self._tx.send(None)
+        self._dumper.join()
 
-    Probably had a bit too much fun here - this returns a queue that is
-    fed into a thread created by the function itself.  Feed it json
-    dictionaries during runtime and None when done.
-    """
+    @staticmethod
+    def _consume(conn, ready, outname, verboseVITS):
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
 
-    def consume(q):
-        """Consume JSON updates, coalescing multiple requests before writing.
-
-        This reduces CPU time spent serializing/writing by only emitting the
-        latest JSON payload when multiple updates are queued.
-        """
+        indent = 4 if verboseVITS else None
+        linebreak = '\n' if verboseVITS else ''
+        separators = None if verboseVITS else (',', ':')
+        separator = ',' + linebreak
+        field_info = []
 
         while True:
-            jsondict = q.get()
-            processed = 1  # track how many items we must task_done()
-
-            if jsondict is None:
-                q.task_done()
-                return
-
-            latest = jsondict
-            stop = False
-
-            # Drain any queued items without blocking; keep only the newest
-            while True:
-                try:
-                    nxt = q.get_nowait()
-                    processed += 1
-                except Empty:
+            try:
+                jsondict = conn.recv()
+                if jsondict is None:
                     break
 
-                if nxt is None:
-                    stop = True
-                else:
-                    latest = nxt
-                q.task_done()
+                next_field_info = conn.recv()
+                ready.set()
+            except (InterruptedError, KeyboardInterrupt, EOFError):
+                break
 
-                if stop:
-                    break
+            # json serialize each field info object to a string
+            serialized_field_info = []
+            for field in next_field_info:
+                serialized_field_info.append(
+                    json.dumps(
+                        field,
+                        allow_nan=False,
+                        indent=indent,
+                        separators=separators
+                    )
+                )
 
-            write_json(ldd, latest, outname)
+            field_info.append(serialized_field_info)
 
-            # Mark the original item done (drained items already task_done'd)
-            q.task_done()
+            f = open(outname + ".tbc.json.tmp", "w")
+            f.write('{'+linebreak)
+            # write the field metadata
+            for (k, v) in jsondict.items():
+                json.dump(k, f, allow_nan=False, indent=indent, separators=separators)
+                f.write(':')
+                json.dump(v, f, allow_nan=False, indent=indent, separators=separators)
+                f.write(separator)
 
-            if stop:
-                return
+            # Write the field info
+            f.write('"fields":['+linebreak)
+            for i, field in enumerate(itertools.chain.from_iterable(field_info)):
+                if i != 0:
+                    f.write(separator)
 
-    q = JoinableQueue()
+                f.write(field)
+            f.write(linebreak+']'+linebreak+'}')
 
-    # Start the self-contained thread
-    t = threading.Thread(target=consume, args=(q,))
-    t.start()
+            f.write('\n')
+            f.close()
+            os.replace(outname + ".tbc.json.tmp", outname + ".tbc.json")
 
-    return q
-
+            ready.clear()
 
 class StridedCollector:
     # This keeps a numpy buffer and outputs an fft block and keeps the overlap

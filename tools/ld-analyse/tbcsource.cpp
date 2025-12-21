@@ -22,6 +22,7 @@
     along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 ************************************************************************/
+#include <limits>
 
 #include "tbcsource.h"
 
@@ -142,6 +143,12 @@ void TbcSource::setFieldOrder(bool _state)
 
     if (reverseFoOn) ldDecodeMetaData.setIsFirstFieldFirst(false);
     else ldDecodeMetaData.setIsFirstFieldFirst(true);
+}
+
+// Method to set if we combine source
+void TbcSource::setCombine(bool _state)
+{
+	combine = _state;
 }
 
 // Method to get the state of the highlight dropouts mode
@@ -542,13 +549,16 @@ TbcSource::ScanLineData TbcSource::getScanLineData(qint32 scanLine)
                                 && (frameLine -1) < videoParameters.lastActiveFrameLine;
 
     // Get the field video and dropout data
-    const SourceVideo::Data &fieldData = isFirstField ? inputFields[inputStartIndex].data : inputFields[inputStartIndex + 1].data;
+    // Put chroma in "composite" field if using Y/C input.
+    const SourceVideo::Data &fieldData = isFirstField ? inputFields[inputStartIndex].data
+                            : inputFields[inputStartIndex + 1].data;
     const ComponentFrame &componentFrame = getComponentFrame();
     DropOuts &dropouts = isFirstField ? firstField.dropOuts : secondField.dropOuts;
 
     scanLineData.composite.resize(videoParameters.fieldWidth);
     scanLineData.luma.resize(videoParameters.fieldWidth);
     scanLineData.isDropout.resize(videoParameters.fieldWidth);
+
 
     for (qint32 xPosition = 0; xPosition < videoParameters.fieldWidth; xPosition++) {
         // Get the 16-bit composite value for the current pixel (frame data is numbered 0-624 or 0-524)
@@ -563,6 +573,20 @@ TbcSource::ScanLineData TbcSource::getScanLineData(qint32 scanLine)
                 if (xPosition >= dropouts.startx(doCount) && xPosition <= dropouts.endx(doCount)) scanLineData.isDropout[xPosition] = true;
             }
         }
+    }
+
+    if (sourceMode == BOTH_SOURCES) {
+        const auto &chromaFieldData = isFirstField ? chromaInputFields[inputStartIndex].data
+                     : chromaInputFields[inputStartIndex + 1].data;
+        // We need to offset by half a word since the input is 16-bit unsigned.
+        const short offset = std::numeric_limits<int16_t>::min();
+        scanLineData.chroma.resize(videoParameters.fieldWidth);
+        for (qint32 xPosition = 0; xPosition < videoParameters.fieldWidth; xPosition++) {
+            scanLineData.chroma[xPosition] = chromaFieldData[(lineNumber.field0() * videoParameters.fieldWidth) + xPosition] + offset;
+            // Combine Y and C to "simulate" composite for the scope.
+            scanLineData.composite[xPosition] += scanLineData.chroma[xPosition];
+        }
+
     }
 
     return scanLineData;
@@ -679,6 +703,11 @@ const Comb::Configuration &TbcSource::getNtscConfiguration()
     return ntscConfiguration;
 }
 
+const MonoDecoder::MonoConfiguration &TbcSource::getMonoConfiguration()
+{
+    return monoConfiguration;
+}
+
 const OutputWriter::Configuration &TbcSource::getOutputConfiguration()
 {
     return outputConfiguration;
@@ -764,12 +793,16 @@ void TbcSource::invalidateImageCache()
 void TbcSource::configureChromaDecoder()
 {
     // Configure the chroma decoder
-    LdDecodeMetaData::VideoParameters videoParameters = ldDecodeMetaData.getVideoParameters();
+    LdDecodeMetaData::VideoParameters videoParameters = ldDecodeMetaData.getVideoParameters(); 
+	
     if (videoParameters.system == PAL || videoParameters.system == PAL_M) {
+		monoConfiguration.yNRLevel = palConfiguration.yNRLevel;
         palColour.updateConfiguration(videoParameters, palConfiguration);
     } else {
+		monoConfiguration.yNRLevel = ntscConfiguration.yNRLevel;
         ntscColour.updateConfiguration(videoParameters, ntscConfiguration);
     }
+	monoDecoder.updateConfiguration(videoParameters, monoConfiguration);
 
     // Configure the OutputWriter.
     // Because we have padding disabled, this won't change the VideoParameters.
@@ -808,20 +841,22 @@ void TbcSource::loadInputFields()
         SourceField::loadFields(chromaSourceVideo, ldDecodeMetaData,
                                 loadedFrameNumber, 1, lookBehind, lookAhead,
                                 chromaInputFields, inputStartIndex, inputEndIndex);
+		if(combine)
+		{
+			// Separate chroma is offset (see chroma_to_u16 in vhsdecode/chroma.py)
+			static constexpr qint32 CHROMA_OFFSET = 32767;
 
-        // Separate chroma is offset (see chroma_to_u16 in vhsdecode/chroma.py)
-        static constexpr qint32 CHROMA_OFFSET = 32767;
+			// Add chroma to luma, removing the offset
+			for (qint32 fieldIndex = inputStartIndex; fieldIndex < inputEndIndex; fieldIndex++) {
+				auto &sourceData = inputFields[fieldIndex].data;
+				const auto &chromaData = chromaInputFields[fieldIndex].data;
 
-        // Add chroma to luma, removing the offset
-        for (qint32 fieldIndex = inputStartIndex; fieldIndex < inputEndIndex; fieldIndex++) {
-            auto &sourceData = inputFields[fieldIndex].data;
-            const auto &chromaData = chromaInputFields[fieldIndex].data;
-
-            for (qint32 i = 0; i < sourceData.size(); i++) {
-                qint32 sum = static_cast<qint32>(sourceData[i]) + static_cast<qint32>(chromaData[i]) - CHROMA_OFFSET;
-                sourceData[i] = static_cast<quint16>(qBound(0, sum, 65535));
-            }
-        }
+				for (qint32 i = 0; i < sourceData.size(); i++) {
+					qint32 sum = static_cast<qint32>(sourceData[i]) + static_cast<qint32>(chromaData[i]) - CHROMA_OFFSET;
+					sourceData[i] = static_cast<quint16>(qBound(0, sum, 65535));
+				}
+			}
+		}
     }
 
     inputFieldsValid = true;
@@ -833,16 +868,57 @@ void TbcSource::decodeFrame()
     if (decodedFrameValid) return;
 
     loadInputFields();
+	
+	bool isMono = false;
 
     // Decode the current frame to components
     componentFrames.resize(1);
-    if (getSystem() == PAL || getSystem() == PAL_M) {
-        // PAL source
-        palColour.decodeFrames(inputFields, inputStartIndex, inputEndIndex, componentFrames);
-    } else {
-        // NTSC source
-        ntscColour.decodeFrames(inputFields, inputStartIndex, inputEndIndex, componentFrames);
-    }
+    yFrames.resize(1);
+    cFrames.resize(1);
+	if(!combine && sourceMode == BOTH_SOURCES)
+	{
+		monoDecoder.decodeFrames(inputFields, inputStartIndex, inputEndIndex, yFrames);
+		if ((getSystem() == PAL || getSystem() == PAL_M) && palConfiguration.chromaFilter != PalColour::mono) {
+			// PAL source
+			palColour.decodeFrames(chromaInputFields, inputStartIndex, inputEndIndex, cFrames);
+		} else if(getSystem() == NTSC && ntscConfiguration.dimensions != 0){
+			// NTSC source
+			ntscColour.decodeFrames(chromaInputFields, inputStartIndex, inputEndIndex, cFrames);
+		}
+		else
+		{
+			isMono = true;
+		}
+		
+		for (qint32 fieldIndex = inputStartIndex, frameIndex = 0; fieldIndex < inputEndIndex; fieldIndex += 2, frameIndex++)
+		{
+			//isMono ? cFrames[frameIndex].init(ldDecodeMetaData.getVideoParameters(), false);
+			componentFrames[frameIndex].init(ldDecodeMetaData.getVideoParameters(), false);
+			componentFrames[frameIndex].setY(*yFrames[frameIndex].getY());
+			if(!isMono){	
+				componentFrames[frameIndex].setU(*cFrames[frameIndex].getU());
+				componentFrames[frameIndex].setV(*cFrames[frameIndex].getV());
+			}
+		}
+	}
+	else
+	{
+		if (getSystem() == PAL || getSystem() == PAL_M) {
+			if(palConfiguration.chromaFilter == palColour.ChromaFilterMode::mono){
+				monoDecoder.decodeFrames(inputFields, inputStartIndex, inputEndIndex, componentFrames);
+			} else {
+				// PAL source
+				palColour.decodeFrames(inputFields, inputStartIndex, inputEndIndex, componentFrames);
+			}
+		} else {
+			if(ntscConfiguration.dimensions == 0){
+				monoDecoder.decodeFrames(inputFields, inputStartIndex, inputEndIndex, componentFrames);
+			} else {
+				// NTSC source
+				ntscColour.decodeFrames(inputFields, inputStartIndex, inputEndIndex, componentFrames);
+			}
+		}
+	}
 
     decodedFrameValid = true;
 }
@@ -891,6 +967,7 @@ QImage TbcSource::generateQImage()
         outputWriter.convert(componentFrames[0], outputFrame);
 
         const auto rgb48Ptr = reinterpret_cast<quint16 *>(outputFrame.data());
+        rgbData.reserve(inputHeight * inputWidth * 3);
 
         // Create RGB32 from RGB48
         for (auto i = 0; i < inputHeight * inputWidth * 3; i += 3) {
@@ -920,6 +997,7 @@ QImage TbcSource::generateQImage()
         // Get pointers to the 16-bit greyscale data
         const quint16 *firstFieldPointer = inputFields[inputStartIndex].data.data();
         const quint16 *secondFieldPointer = inputFields[inputStartIndex + 1].data.data();
+        rgbData.reserve(inputHeight * inputWidth * 3);
 
         // Create RGB32 from Gray16
         for (auto y = 0; y < fieldHeight * 2; y++) {

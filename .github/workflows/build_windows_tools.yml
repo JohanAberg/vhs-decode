@@ -5,9 +5,9 @@ on:
 
 env:
   # other tools to be bundled
-  FFMPEG_FILE: "ffmpeg-7.1.1-full_build.zip"
-  FFMPEG_PATH: "ffmpeg-7.1.1-full_build"
-  FFMPEG_URL: "https://github.com/GyanD/codexffmpeg/releases/download/7.1.1/ffmpeg-7.1.1-full_build.zip"
+  FFMPEG_FILE: "ffmpeg-8.0.1-full_build.zip"
+  FFMPEG_PATH: "ffmpeg-8.0.1-full_build"
+  FFMPEG_URL: "https://github.com/GyanD/codexffmpeg/releases/download/8.0/ffmpeg-8.0.1-full_build.zip"
   FLAC_FILE: "flac-1.5.0-win.zip"
   FLAC_PATH: "flac-1.5.0-win"
   FLAC_URL: "https://ftp.osuosl.org/pub/xiph/releases/flac/flac-1.5.0-win.zip"
@@ -35,13 +35,13 @@ jobs:
       - name: Setup vcpkg
         uses: lukka/run-vcpkg@v11
         with:
-          vcpkgGitCommitId: "acd5bba5aac8b6573b5f6f463dc0341ac0ee6fa4"
+          vcpkgGitCommitId: "f5cbc726b123896eef77f5acc1b9047a28a0731e"
 
       - name: Run CMake
         uses: lukka/run-cmake@v10
         with:
           configurePreset: vcpkg
-          configurePresetAdditionalArgs: "['-G Ninja', '-DCMAKE_BUILD_TYPE=Release', '-DUSE_QT_VERSION=6', '-DBUILD_PYTHON=false', '-DVCPKG_APPLOCAL_DEPS=ON']"
+          configurePresetAdditionalArgs: "['-G Ninja', '-DCMAKE_BUILD_TYPE=Release', '-DUSE_QT_VERSION=6', '-DBUILD_PYTHON=false', '-DVCPKG_APPLOCAL_DEPS=ON', '-DBUILD_TESTING=OFF',]"
           buildPreset: vcpkg
           buildPresetAdditionalArgs: "['--config Release']"
 
@@ -57,21 +57,13 @@ jobs:
       - name: Copy license files to release directory
         run: |
           New-Item -ItemType Directory -Path release\LICENSES
-          "brotli", `
-          "bzip2", `
           "double-conversion", `
           "fftw3", `
-          "freetype", `
           "getopt-win32", `
-          "harfbuzz", `
-          "icu", `
           "libpng", `
-          "openssl", `
-          "pcre2", `
           "qtbase", `
           "qwt", `
-          "zlib", `
-          "zstd" | ForEach-Object { Copy-Item -Path build\vcpkg_installed\x64-windows\share\$($_)\copyright -Destination release\LICENSES\copyright-$($_) }
+          "zlib" | ForEach-Object { Copy-Item -Path build\vcpkg_installed\x64-windows\share\$($_)\copyright -Destination release\LICENSES\copyright-$($_) }
           Rename-Item -Path release\LICENSES\copyright-qtbase -NewName copyright-qt6
 
       - name: Copy scripts to release directory

@@ -25,10 +25,10 @@
 #include "dec_audiocorrection.h"
 
 AudioCorrection::AudioCorrection() :
-    m_silencedSamplesCount(0),
-    m_validSamplesCount(0),
+    m_firstSectionFlag(true),
     m_concealedSamplesCount(0),
-    m_firstSectionFlag(true)
+    m_silencedSamplesCount(0),
+    m_validSamplesCount(0)
 {}
 
 void AudioCorrection::pushSection(const AudioSection &audioSection)
@@ -242,7 +242,7 @@ void AudioCorrection::processQueue()
     }
 }
 
-void AudioCorrection::showStatistics()
+void AudioCorrection::showStatistics() const
 {
     qInfo().nospace() << "Audio correction statistics:";
     qInfo().nospace() << "  Total mono samples: "
@@ -250,4 +250,15 @@ void AudioCorrection::showStatistics()
     qInfo().nospace() << "  Valid mono samples: " << m_validSamplesCount;
     qInfo().nospace() << "  Concealed mono samples: " << m_concealedSamplesCount;
     qInfo().nospace() << "  Silenced mono samples: " << m_silencedSamplesCount;
+}
+
+void AudioCorrection::flush()
+{
+    // Output any remaining sections in the correction buffer
+    // Since we can't perform correction on the last sections (no following data),
+    // we output them as-is
+    while (!m_correctionBuffer.isEmpty()) {
+        m_outputBuffer.enqueue(m_correctionBuffer.first());
+        m_correctionBuffer.removeFirst();
+    }
 }

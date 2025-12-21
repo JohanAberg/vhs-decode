@@ -97,7 +97,9 @@ public:
      */
     std::vector<LineInfo> computeLineLocations(
         const std::vector<Pulse>& pulses,
-        double expectedLineLength);
+        double expectedLineLength,
+        const RealArray& video,
+        float syncThreshold);
     
     /**
      * Find the start of horizontal sync using zero-crossing detection

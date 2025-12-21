@@ -32,9 +32,7 @@ BlackSnrAnalysisDialog::BlackSnrAnalysisDialog(QWidget *parent) :
     ui(new Ui::BlackSnrAnalysisDialog)
 {
     ui->setupUi(this);
-    //setWindowFlags(Qt::Window);
-    setWindowFlags(Qt::Dialog | Qt::WindowTitleHint | Qt::WindowSystemMenuHint);
-    setSizeGripEnabled(true);
+    setWindowFlags(Qt::Window);
 
     // Set up the chart view
     plot = new QwtPlot();

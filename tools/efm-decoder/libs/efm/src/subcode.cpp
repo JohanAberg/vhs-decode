@@ -29,7 +29,8 @@ SectionMetadata Subcode::fromData(const QByteArray &data)
 {
     // Ensure the data is 98 bytes long
     if (data.size() != 98) {
-        qFatal("Subcode::fromData(): Data size of %d does not match 98 bytes", data.size());
+        qFatal("Subcode::fromData(): Data size of %d does not match 98 bytes",
+               static_cast<int>(data.size()));
     }
 
     // Extract the p-channel data and q-channel data
@@ -60,7 +61,7 @@ SectionMetadata Subcode::fromData(const QByteArray &data)
     // if (oneCount != 96 && oneCount != 0) {
     //     if (m_showDebug) {
     //         qDebug() << "Subcode::fromData(): P channel data contains" << 96-oneCount << "zeros and"
-    //                  << oneCount << "ones - indicating some p-channel corruption"; 
+    //                  << oneCount << "ones - indicating some p-channel corruption";
     //     }
     // }
 
@@ -203,7 +204,7 @@ SectionMetadata Subcode::fromData(const QByteArray &data)
             } else {
                 sectionMetadata.setSectionType(SectionType(SectionType::UserData), trackNumber);
             }
-            
+
             // Set the frame time q_data_channel[3-5]
             sectionMetadata.setSectionTime(SectionTime(
                     bcd2ToInt(qChannelData[3]), bcd2ToInt(qChannelData[4]), bcd2ToInt(qChannelData[5])));
@@ -228,7 +229,7 @@ SectionMetadata Subcode::fromData(const QByteArray &data)
                 while (upcString.size() < 13) {
                     upcString = "0" + upcString;
                 }
-                
+
                 qDebug() << "Subcode::fromData(): Q-Mode 2 has UPC/EAN code of:" << upcString;
             }
 
@@ -442,7 +443,7 @@ QByteArray Subcode::toData(const SectionMetadata &sectionMetadata)
         }
 
         if (frameType.type() == SectionType::LeadOut) {
-        quint16 tno = 0xAA; // Hexidecimal AA for lead-out
+        quint16 tno = 0xAA; // Hexadecimal AA for lead-out
         quint16 index = 01; // Must be 01 for lead-out
         quint8 zero = 0;
 
@@ -483,8 +484,8 @@ void Subcode::setBit(QByteArray &data, quint8 bitPosition, bool value)
 {
     // Check to ensure the bit position is valid
     if (bitPosition >= data.size() * 8) {
-        qFatal("Subcode::setBit(): Bit position %d is out of range for data size %d", bitPosition,
-               data.size());
+        qFatal("Subcode::setBit(): Bit position %d is out of range for data size %d",
+               bitPosition, static_cast<int>(data.size()));
     }
 
     // We need to convert this to a byte number and bit number within that byte
@@ -504,8 +505,8 @@ bool Subcode::getBit(const QByteArray &data, quint8 bitPosition)
 {
     // Check to ensure we don't overflow the data array
     if (bitPosition >= data.size() * 8) {
-        qFatal("Subcode::getBit(): Bit position %d is out of range for data size %d", bitPosition,
-               data.size());
+        qFatal("Subcode::getBit(): Bit position %d is out of range for data size %d",
+               bitPosition, static_cast<int>(data.size()));
     }
 
     // We need to convert this to a byte number and bit number within that byte

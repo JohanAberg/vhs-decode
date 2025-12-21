@@ -6,20 +6,6 @@ from vhsdecode.addons.gnuradioZMQ import ZMQSend, ZMQReceive
 class DemodCacheTape(DemodCache):
     def __init__(self, *args, **kwargs):
         super(DemodCacheTape, self).__init__(*args, **kwargs)
-        
-        # Increase prefetch for GPU to keep it busy during CPU resync
-        rf = args[0]
-        use_gpu = False
-        if hasattr(rf, 'use_gpu'):
-             use_gpu = rf.use_gpu
-        elif hasattr(rf, 'extra_options') and 'use_gpu' in rf.extra_options:
-             use_gpu = rf.extra_options['use_gpu']
-
-        if use_gpu:
-            # Prefetch ~10 frames (approx 500 blocks)
-            # Default is ~2 fields (~100 blocks)
-            self.prefetch = int((self.bytes_per_field * 20) / self.blocksize) + 4
-            
         self._gnrc_afe = args[0].options.gnrc_afe
         if self._gnrc_afe:
             self.zmqsend = ZMQSend()

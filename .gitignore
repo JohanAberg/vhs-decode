@@ -55,7 +55,6 @@ __pycache__
 *.tbc.json
 testdata
 testout
-*.u8
 
 # Profiling results
 Benchfile*
@@ -89,64 +88,26 @@ ui_*.h
 .vscode/
 .theia/
 
-# Cython build artifacts
+# cython build artifacts
 vhsdecode/*.c
-**/*.pyd
-**/*.so
 
 # auto-generated version file
 vhsdecode/_version.py
 
-# Python test and cache artifacts
-.pytest_cache/
-.coverage
-htmlcov/
-.tox/
 
-# GPU-related artifacts
-benchmark_results.json
-scaling_benchmark_results.json
-benchmark_report.md
-*.nvprof
-*.prof
-*.nsight-cuprof-report
+# Added by cargo
 
-# Benchmark and test output files
-bench_*.log
-bench_*.tbc
-bench_*.tbc.json
-bench_*_chroma.tbc
-output_*.log
-output_*.tbc
-output_*.tbc.json
-output_*_chroma.tbc
-test_*.log
-test_*.tbc
-test_*.tbc.json
-test_*_chroma.tbc
-out*.log
-out*.tbc
-out*.tbc.json
-out*_chroma.tbc
-debug_*.py
-*.tmp
+/target
 
-# Sample data directory (too large for repo)
-sample_data/
 
-# IDE and editor artifacts
-*.swp
-*.swo
-*~
-.DS_Store
-Thumbs.db
-*.nsys-rep
-*.qdrep
+# Added by cargo
+#
+# already existing elements were commented out
 
-# Test data (too large for repo)
-tests/fixtures/gpu_validation/*.lds
-tests/fixtures/gpu_validation/*.ldf
+#/target
 
-# Python virtual environment
-.venv/
-venv/
+# Installation tool things
+ld_decode.egg-info/
+
+# Compilation script
+compile.bat

@@ -71,7 +71,7 @@ RealArray TBCScaler::scaleLine(const RealArray& input, size_t lineStart, size_t 
 
 std::vector<RealArray> TBCScaler::scaleField(
     const RealArray& input,
-    const std::vector<size_t>& lineStarts,
+    const std::vector<double>& lineStarts,
     size_t numLines)
 {
     std::vector<RealArray> output;
@@ -83,11 +83,11 @@ std::vector<RealArray> TBCScaler::scaleField(
         double begin, end;
         
         if (line < lineStarts.size()) {
-            begin = static_cast<double>(lineStarts[line]);
+            begin = lineStarts[line];
             
             // End is either next line start or begin + nominal line length
             if (line + 1 < lineStarts.size()) {
-                end = static_cast<double>(lineStarts[line + 1]);
+                end = lineStarts[line + 1];
             } else {
                 end = begin + inputLineLen;
             }

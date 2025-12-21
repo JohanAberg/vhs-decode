@@ -97,8 +97,9 @@ static bool loadTransformThresholds(QCommandLineParser &parser, QCommandLineOpti
 
 int main(int argc, char *argv[])
 {
-    //set 'binary mode' for stdin and stdout on windows
+    // Set 'binary mode' for stdin and stdout on Windows
     setBinaryMode();
+
     // Install the local debug message handler
     setDebug(true);
     qInstallMessageHandler(debugOutputHandler);
@@ -233,7 +234,7 @@ int main(int argc, char *argv[])
 
     // Option to set the luma noise reduction level
     QCommandLineOption lumaNROption(QStringList() << "luma-nr",
-                                    QCoreApplication::translate("main", "Luma noise reduction level in dB (default 1.0)"),
+                                    QCoreApplication::translate("main", "Luma noise reduction level in dB (default 0.0)"),
                                     QCoreApplication::translate("main", "number"));
     parser.addOption(lumaNROption);
 
@@ -312,6 +313,7 @@ int main(int argc, char *argv[])
     qint32 maxThreads = QThread::idealThreadCount();
     PalColour::Configuration palConfig;
     Comb::Configuration combConfig;
+    MonoDecoder::MonoConfiguration monoConfig;
     OutputWriter::Configuration outputConfig;
 
     if (parser.isSet(startFrameOption)) {
@@ -385,6 +387,7 @@ int main(int argc, char *argv[])
     if (parser.isSet(lumaNROption)) {
         combConfig.yNRLevel = parser.value(lumaNROption).toDouble();
         palConfig.yNRLevel = parser.value(lumaNROption).toDouble();
+        monoConfig.yNRLevel = parser.value(lumaNROption).toDouble();
 
         if (combConfig.yNRLevel < 0.0) {
             // Quit with error
@@ -501,7 +504,7 @@ int main(int argc, char *argv[])
         combConfig.adaptive = false;
         decoder = std::make_unique<NtscDecoder>(combConfig);
     } else if (decoderName == "mono") {
-        decoder = std::make_unique<MonoDecoder>();
+        decoder = std::make_unique<MonoDecoder>(monoConfig);
     } else {
         qCritical() << "Unknown decoder" << decoderName;
         return -1;

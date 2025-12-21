@@ -399,9 +399,10 @@ class FieldPALCVBS(FieldCVBSShared, ldd.FieldPAL):
 
     def refine_linelocs_hsync(self):
         if not self.rf.options.skip_hsync_refine:
+            threshold = self.rf.iretohz(self.rf.SysParams["vsync_ire"] / 2)
             return sync.refine_linelocs_hsync(
-                self, self.linebad, 0
-            )  # TODO fix last param once it's actually used.
+                self, self.linebad, threshold
+            )
         else:
             return self.linelocs1.copy()
 
@@ -443,7 +444,10 @@ class FieldNTSCCVBS(FieldCVBSShared, ldd.FieldNTSC):
 
     def refine_linelocs_hsync(self):
         if not self.rf.options.skip_hsync_refine:
-            # TODO: test and use modified variant.
+            threshold = self.rf.iretohz(self.rf.SysParams["vsync_ire"] / 2)
+            return sync.refine_linelocs_hsync(
+                self, self.linebad, threshold
+            )
             return super(FieldNTSCCVBS, self).refine_linelocs_hsync()
         else:
             return self.linelocs1.copy()
@@ -472,6 +476,15 @@ class FieldNTSCCVBS(FieldCVBSShared, ldd.FieldNTSC):
     def compute_deriv_error(self, linelocs, baserr):
         """Disabled this for now as line starts can vary widely."""
         return baserr
+
+    def hz_to_output(self, input):
+        if (
+            self.rf.DecoderParams["clamp_agc"] is True
+            and self.outlinecount * self.outlinelen == input.size
+        ):
+            return hz_to_output_override(self, input)
+        else:
+            return super(FieldNTSCCVBS, self).hz_to_output(input)
 
 
 class FieldMPALCVBS(FieldNTSCCVBS):

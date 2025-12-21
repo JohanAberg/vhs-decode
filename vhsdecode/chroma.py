@@ -4,9 +4,8 @@ import numpy as np
 import lddecode.utils as lddu
 import lddecode.core as ldd
 from vhsdecode.utils import get_line
-import vhsdecode.utils as utils
 import scipy.signal as sps
-
+from vhsdecode.rust_utils import sosfiltfilt_rust
 
 from numba import njit
 
@@ -72,6 +71,7 @@ def comb_c_pal(data, line_len):
     and one advanced by 2H
     line by line. VCRs do this to reduce crosstalk.
     Helps chroma stability on LP tapes in particular.
+    (VCRs only adds delayed by 1h instead)
     """
 
     # TODO: Compensate for PAL quarter cycle offset
@@ -92,19 +92,22 @@ def comb_c_pal(data, line_len):
 @njit(cache=True, nogil=True)
 def comb_c_ntsc(data, line_len):
     """Very basic comb filter, adds the signal together with a signal delayed by 1H,
+    and one advanced by 1h
     line by line. VCRs do this to reduce crosstalk.
+    (VCRs only adds delayed by 1h instead)
     """
 
     data2 = data.copy()
     numlines = len(data) // line_len
     for line_num in range(16, numlines - 2):
+        advanced1h = data2[(line_num + 1) * line_len : (line_num + 2) * line_len]
         delayed1h = data2[(line_num - 1) * line_len : (line_num) * line_len]
         line_slice = data[line_num * line_len : (line_num + 1) * line_len]
         # Let the delayed signal contribute 1/3.
         # Could probably make the filtering configurable later.
         data[line_num * line_len : (line_num + 1) * line_len] = (
-            (line_slice * 2) - (delayed1h)
-        ) / 3
+            (line_slice * 2) - advanced1h - delayed1h
+        ) / 4
     return data
 
 
@@ -161,8 +164,17 @@ def burst_deemphasis(chroma, lineoffset, linesout, outwidth, burstarea):
     return chroma
 
 
-def demod_chroma_filt(data, filter, blocklen, notch, do_notch=None, move=10):
-    out_chroma = utils.filter_simple(data[:blocklen], filter)
+def demod_chroma_filt(
+    data, filter, blocklen, notch, do_notch=None, move=10, audio_notch=None
+):
+    out_chroma = sosfiltfilt_rust(filter, data[:blocklen])
+
+    if audio_notch is not None:
+        out_chroma = sps.filtfilt(
+            audio_notch[0],
+            audio_notch[1],
+            out_chroma,
+        )
 
     if do_notch is not None and do_notch:
         out_chroma = sps.filtfilt(
@@ -204,6 +216,7 @@ def process_chroma(
                 field.rf.Filters["FVideoNotch"],
                 field.rf.notch,
                 move=(int(10 * (field.rf.sys_params["outfreq"] / 40))),
+                audio_notch=field.rf.Filters.get("FChromaAudioNotch", None),
             )
 
             if not disable_tracking_cafc:
@@ -277,7 +290,7 @@ def process_chroma(
     # frequencies. We only want the difference wave which is at the correct color
     # carrier frequency here.
     # We do however want to be careful to avoid filtering out too much of the sideband.
-    uphet = utils.filter_simple(uphet, field.rf.Filters["FChromaFinal"])
+    uphet = sosfiltfilt_rust(field.rf.Filters["FChromaFinal"], uphet)
 
     # FFT filter way to use a supergauss filter to more sharply cut out the upper harmonic
     # This may be a better approach but slows down things a bit much so not using for now

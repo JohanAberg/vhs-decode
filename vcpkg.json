@@ -3,8 +3,36 @@
 	"name": "vhs-decode",
 	"license": "GPL-3.0+",
 	"dependencies": [
-	"qwt",
-	"fftw3",
-	"getopt"
+		{
+			"name": "qtbase",
+			"default-features": false,
+			"features": [
+				"concurrent",
+				"gui",
+				"jpeg",
+				"png",
+				"thread",
+				"widgets"
+			]
+		},
+		"qwt",
+		{
+			"name": "fftw3",
+			"features": [
+				"avx",
+				"avx2",
+				"sse2"
+			]
+		},
+		"getopt",
+		"pkgconf",
+		{
+			"name": "ffmpeg",
+			"default-features": false,
+			"features": [
+				"avcodec",
+				"avformat"
+			]
+		}
 	]
 }

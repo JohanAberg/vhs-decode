@@ -39,12 +39,11 @@
 #include "vbidecoder.h"
 #include "videoiddecoder.h"
 #include "vitcdecoder.h"
-#include "filters.h"
 
 // Chroma decoder includes
-#include "configuration.h"
 #include "palcolour.h"
 #include "comb.h"
+#include "monodecoder.h"
 
 class TbcSource : public QObject
 {
@@ -57,6 +56,7 @@ public:
         LineNumber lineNumber;
         QVector<qint32> composite;
         QVector<qint32> luma;
+        QVector<qint32> chroma;
         QVector<bool> isDropout;
         qint32 blackIre;
         qint32 whiteIre;
@@ -79,6 +79,7 @@ public:
     void setChromaDecoder(bool _state);
     void setFieldView(bool _state);
     void setFieldOrder(bool _state);
+	void setCombine(bool _state);
     bool getHighlightDropouts();
     bool getChromaDecoder();
     bool getFieldOrder();
@@ -148,6 +149,7 @@ public:
                                 const OutputWriter::Configuration &outputConfiguration);
     const PalColour::Configuration &getPalConfiguration();
     const Comb::Configuration &getNtscConfiguration();
+    const MonoDecoder::MonoConfiguration &getMonoConfiguration();
     const OutputWriter::Configuration &getOutputConfiguration();
 
     qint32 startOfNextChapter(qint32 currentFrameNumber);
@@ -190,6 +192,7 @@ private:
     // Chroma decoder objects
     PalColour palColour;
     Comb ntscColour;
+	MonoDecoder monoDecoder;
     OutputWriter outputWriter;
 
     // VBI decoders
@@ -214,6 +217,8 @@ private:
 
     // Chroma decoder output for the loaded frame
     QVector<ComponentFrame> componentFrames;
+    QVector<ComponentFrame> yFrames;
+    QVector<ComponentFrame> cFrames;
     bool decodedFrameValid;
 
     // RGB image data for the loaded frame
@@ -223,7 +228,9 @@ private:
     // Chroma decoder configuration
     PalColour::Configuration palConfiguration;
     Comb::Configuration ntscConfiguration;
+	MonoDecoder::MonoConfiguration monoConfiguration;
     OutputWriter::Configuration outputConfiguration;
+	bool combine = false;
 
     // Chapter map
     QVector<qint32> chapterMap;

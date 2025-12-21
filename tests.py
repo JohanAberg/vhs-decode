@@ -4,8 +4,7 @@ import numpy as np
 
 import vhsdecode.process as process
 import vhsdecode.utils as utils
-# from vhsdecode.sync import calczc as c_calczc  # Not available in compiled module
-import matplotlib.pyplot as plt
+from vhsdecode.sync import calczc as c_calczc
 
 
 class DemodTest(unittest.TestCase):
@@ -116,9 +115,9 @@ def test_sync(filename, num_pulses=None, blank_approx=None, sync_approx=None):
     measured_sync, measured_blank = rfdecoder.resync._field_state.pull_levels()
 
     if blank_approx:
-        math.isclose(measured_blank, blank_approx)
+        assert math.isclose(measured_blank, blank_approx)
     if sync_approx:
-        math.isclose(measured_sync, sync_approx)
+        assert math.isclose(measured_sync, sync_approx)
 
     return True
 
@@ -161,10 +160,10 @@ class ZCTest(unittest.TestCase):
         data = np.array([8.0, 4.0, 1.0, 8.0, 1.0, 4.0, 8.0])
         data2 = np.array([8.0, 4.0, 4.0, 8.0, 30.0, 99.0, 8.0])
 
-        zc = c_calczc(data, 0, 3.0, edge=-1, count=len(data))
-        zc2 = c_calczc(data, 2, 3.0, edge=1, count=len(data))
+        _ = c_calczc(data, 0, 3.0, edge=-1, count=len(data))
+        _ = c_calczc(data, 2, 3.0, edge=1, count=len(data))
 
-        zc3 = c_calczc(data2, 0, 3.0, edge=-1, count=len(data))
+        _ = c_calczc(data2, 0, 3.0, edge=-1, count=len(data))
         zc4 = c_calczc(data2, 0, 3.0, edge=1, count=len(data))
         assert zc4 is None
 
@@ -177,6 +176,76 @@ class ZCTest(unittest.TestCase):
         # ax2.plot(data2)
         # ax2.axvline(zc3)
         # plt.show()
+
+
+class RustNumpyMath(unittest.TestCase):
+    def test_rust_angle(self):
+        from vhsd_rust import complex_angle_py
+
+        loaded = np.load("hilbert_data.npz")
+        complex_hilbert_data = loaded["data"]
+        a = np.angle(complex_hilbert_data)
+        b = complex_angle_py(complex_hilbert_data)
+        assert (a == b).all()
+
+    def test_rust_unwrap(self):
+        from vhsd_rust import unwrap_angles
+
+        # phase = [0.0, 0.78539816, 1.57079633, 5.49778714, 6.28318531]
+
+        loaded = np.load("hilbert_data.npz")
+        # complex_hilbert_data = loaded["data"]
+        data = np.angle(loaded["data"])
+        a = np.unwrap(data)
+        b = unwrap_angles(np.array(data))
+
+        # print(a - b)
+        assert np.isclose(b, a, atol=1e-15, rtol=1e-13).all()
+
+    def test_rust_diff(self):
+        from vhsdecode.hilbert import diff_forward
+        from vhsd_rust import diff_forward_in_place
+
+        loaded = np.load("hilbert_data.npz")
+        data = np.angle(loaded["data"])
+        output_ediff = np.ediff1d(data, to_begin=0)
+        output_cython = diff_forward(data)
+        output_rust = np.copy(data)
+        diff_forward_in_place(output_rust)
+        assert (output_ediff == output_cython).all()
+        assert (output_rust == output_cython).all()
+
+
+class LevelDetect(unittest.TestCase):
+    def test_1(self):
+        import lddecode.core as ldd
+        from vhsdecode.field import FieldPALVHS
+        import logging
+
+        ldd.logger = logging.getLogger("test")
+        ldd.logger.setLevel(5)
+        ldd.logger.info("test")
+        demod_05_data = np.loadtxt("PAL_GOOD.txt.gz")
+
+        rf_options = {}
+        rf_options["level_detect_divisor"] = 2
+        rfdecoder = process.VHSRFDecode(
+            inputfreq=40, system="PAL", tape_format="VHS", rf_options=rf_options
+        )
+
+        data_stub = {}
+        data_stub["input"] = np.zeros(5)
+        data_stub["video"] = {}
+        data_stub["video"]["demod"] = np.zeros_like(demod_05_data)
+        data_stub["video"]["demod_05"] = demod_05_data
+
+        field = FieldPALVHS(rfdecoder, data_stub)
+
+        _ = rfdecoder.resync.get_pulses(field)
+        blank_level = rfdecoder.resync._field_state._blanklevels.current()
+        sync_level = rfdecoder.resync._field_state._synclevels.current()
+        print("blank level: ", blank_level)
+        print("sync level: ", sync_level)
 
 
 if __name__ == "__main__":

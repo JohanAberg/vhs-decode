@@ -3,7 +3,7 @@ import os
 import sys
 import signal
 import traceback
-import time
+import json
 
 import numpy
 
@@ -28,11 +28,13 @@ from vhsdecode.cmdcommons import (
     test_output_file,
 )
 from vhsdecode.formats import TAPE_SPEEDS
+from vhsd_rust import check_debug
 
 supported_tape_formats = {
     "VHS",
     "VHSHQ",
     "SVHS",
+    "SVHS_ET",
     "UMATIC",
     "UMATIC_HI",
     "BETAMAX",
@@ -56,7 +58,8 @@ def main(args=None, use_gui=False):
     format_help = "Tape format - " + " ".join(supported_tape_formats) + "are supported"
 
     parser, debug_group = common_parser(
-        "Extracts video from RAW RF captures of colour-under & composite modulated tapes",
+        "Extracts video from RAW RF captures of colour-under & composite modulated"
+        " tapes",
         use_gui=use_gui,
     )
 
@@ -78,7 +81,11 @@ def main(args=None, use_gui=False):
         metavar="tape_speed",
         default="sp",
         choices=TAPE_SPEEDS.keys(),
-        help="Tape speed selection for adjusting format parameters. SP (default), LP, SLP, EP, and VP. Only supported for some formats. SLP and EP refers to the same speed.",
+        help=(
+            "Tape speed selection for adjusting format parameters. SP (default), LP,"
+            " SLP, EP, and VP. Only supported for some formats. SLP and EP refers to"
+            " the same speed."
+        ),
     )
     parser.add_argument(
         "--params_file",
@@ -96,7 +103,10 @@ def main(args=None, use_gui=False):
         metavar="IRE Multiplier",
         type=float,
         default=0.1,
-        help="Multiply top/bottom IRE in json by 1 +/- this value (used to avoid clipping on RGB conversion in chroma decoder).",
+        help=(
+            "Multiply top/bottom IRE in json by 1 +/- this value (used to avoid"
+            " clipping on RGB conversion in chroma decoder)."
+        ),
     )
     luma_group.add_argument(
         "--ire0_adjust",
@@ -110,7 +120,10 @@ def main(args=None, use_gui=False):
         metavar="High frequency boost multiplier",
         type=float,
         default=None,
-        help="Multiplier for boost to high rf frequencies, uses default if not specified. Subject to change.",
+        help=(
+            "Multiplier for boost to high rf frequencies, uses default if not"
+            " specified. Subject to change."
+        ),
     )
     luma_group.add_argument(
         "--nodd",
@@ -129,7 +142,11 @@ def main(args=None, use_gui=False):
         default=0,
         const=10,
         type=float,
-        help="Enable notch filter on FM audio frequencies to filter out wave-like pattern from interference, mainly useful on VHS. Optional argument to specify Q factor (filter width)",
+        help=(
+            "Enable notch filter on FM audio frequencies to filter out wave-like"
+            " pattern from interference, mainly useful on VHS. Optional argument to"
+            " specify Q factor (filter width)"
+        ),
     )
     if not use_gui:
         luma_group.add_argument(
@@ -154,7 +171,10 @@ def main(args=None, use_gui=False):
         dest="nldeemp",
         action="store_true",
         default=False,
-        help="Enable primitive clipping non-linear deemphasis, can help reduce ringing and oversharpening. (WIP).",
+        help=(
+            "Enable primitive clipping non-linear deemphasis, can help reduce ringing"
+            " and oversharpening. (WIP)."
+        ),
     )
     luma_group.add_argument(
         "--sd",
@@ -182,7 +202,11 @@ def main(args=None, use_gui=False):
         dest="cafc",
         action="store_true",
         default=False,
-        help="Tries to detect the chroma carrier frequency on a field basis within some limit instead of using the default one for the format. Mainly useful for debug purposes and used on PAL betamax. implies --recheck_phase",
+        help=(
+            "Tries to detect the chroma carrier frequency on a field basis within some"
+            " limit instead of using the default one for the format. Mainly useful for"
+            " debug purposes and used on PAL betamax. implies --recheck_phase"
+        ),
     )
     chroma_group.add_argument(
         "-T",
@@ -211,14 +235,20 @@ def main(args=None, use_gui=False):
         dest="skip_chroma",
         action="store_true",
         default=False,
-        help="Don't output chroma even for formats that may have it and possibly skip some of the chroma processing.",
+        help=(
+            "Don't output chroma even for formats that may have it and possibly skip"
+            " some of the chroma processing."
+        ),
     )
     plot_options = "demodblock, deemphasis, raw_pulses, line_locs"
     debug_group.add_argument(
         "--dp",
         "--debug_plot",
         dest="debug_plot",
-        help="Do a plot for the requested data, separated by whitespace. Current options are: "
+        help=(
+            "Do a plot for the requested data, separated by whitespace. Current options"
+            " are: "
+        )
         + plot_options
         + ".",
     )
@@ -236,7 +266,10 @@ def main(args=None, use_gui=False):
         metavar="value",
         type=int,
         default=3,
-        help="Use only every nth sample for vsync serration code - may improve speed at cost of minor accuracy. Limited to max 10.",
+        help=(
+            "Use only every nth sample for vsync serration code - may improve speed at"
+            " cost of minor accuracy. Limited to max 10."
+        ),
     )
     debug_group.add_argument(
         "--no_resample",
@@ -250,14 +283,62 @@ def main(args=None, use_gui=False):
         dest="fallback_vsync",
         action="store_true",
         default=False,
-        help="Enable vsync detect fallback. Will be enabled by default once more tested, so expect this option to change. Always enabled when using TypeC tape format",
+        help=(
+            "Enable vsync detect fallback. Will be enabled by default once more tested,"
+            " so expect this option to change. Always enabled when using TypeC tape"
+            " format"
+        ),
+    )
+    debug_group.add_argument(
+        "--relaxed_line0",
+        dest="relaxed_line0",
+        action="store_true",
+        default=False,
+        help=(
+            "Enable relaxed line0 detection fallback logic. Useful for damaged tapes where "
+            "standard detection fails. Requires --fallback_vsync."
+        ),
+    )
+    debug_group.add_argument(
+        "--field_order_confidence",
+        dest="field_order_confidence",
+        default=100,
+        metavar="value",
+        type=int,
+        help=(
+            "Allow field order cadence to change after n percent of field order pulses detected.\n"
+            "  Reduce this number if you experience field order issues when decoding sources with multiple recordings, such as home recordings\n"
+            "  Increase this number if there is damage to the v-sync area to prevent incorrect field order detection\n"
+            "  Range 0-100; Sane Values 50-100\n"
+            "    100, (default) all field order pulses must match to change field cadence\n"
+            "     50, half of field order pulses must match to change field cadence\n"
+            "      0, any field order pulse can match to change field cadence\n"
+        ),
+    )
+    debug_group.add_argument(
+        "--field_order_action",
+        dest="field_order_action",
+        default="detect",
+        metavar="value",
+        type=lambda x: x if x in ["detect", "duplicate", "drop", "none"] else parser.error('--field_order_action must be one of ["detect", "duplicate", "drop", "none"]'),
+        help=(
+            "Decides how to handle field order discontinuities,\n"
+            "  When the field order cadence is broken such that there are two Top or two Bottom fields.\n"
+            "  * `detect`:    (default) use the distance between the dropped field to determine whether to drop or duplicate.\n"
+            "  * `duplicate`: always duplicate the last valid field\n"
+            "  * `drop`:      always drop the last valid field\n"
+            "  * `none`:      do nothing, (field order will be out of sync causing issues for interlaced video)\n"
+        ),
     )
     debug_group.add_argument(
         "--use_saved_levels",
         dest="saved_levels",
         action="store_true",
         default=False,
-        help="Try re-using video levels detected from the first decoded fields instead of re-calculating each frame. Will be done by default once well tested",
+        help=(
+            "Try re-using video levels detected from the first decoded fields instead"
+            " of re-calculating each frame. Will be done by default once well tested"
+        ),
     )
     debug_group.add_argument(
         "--export_raw_tbc",
@@ -282,7 +363,10 @@ def main(args=None, use_gui=False):
         metavar="value",
         type=float,
         default=None,
-        help="RF level fraction threshold for dropouts as percentage of average (in decimal).",
+        help=(
+            "RF level fraction threshold for dropouts as percentage of average (in"
+            " decimal)."
+        ),
     )
     dodgroup.add_argument(
         "--dod_t_abs",
@@ -291,7 +375,10 @@ def main(args=None, use_gui=False):
         metavar="value",
         type=float,
         default=None,
-        help="RF level threshold absolute value. Note that RF levels vary greatly between tapes and recording setups.",
+        help=(
+            "RF level threshold absolute value. Note that RF levels vary greatly"
+            " between tapes and recording setups."
+        ),
     )
     dodgroup.add_argument(
         "--dod_h",
@@ -300,7 +387,10 @@ def main(args=None, use_gui=False):
         metavar="value",
         type=float,
         default=f.DEFAULT_HYSTERESIS,
-        help="Dropout detection hysteresis, the rf level needs to go above the dropout threshold multiplied by this for a dropout to end.",
+        help=(
+            "Dropout detection hysteresis, the rf level needs to go above the dropout"
+            " threshold multiplied by this for a dropout to end."
+        ),
     )
     dodgroup.add_argument(
         "--gnrc",
@@ -308,85 +398,10 @@ def main(args=None, use_gui=False):
         dest="gnrc_afe",
         action="store_true",
         default=False,
-        help="Open a ZMQ pipe back and forth to GNU Radio for RF AFE/EQ/Group delay measurements. (WIP)\nYou might want to use this with -t 1",
-    )
-    
-    # GPU acceleration options
-    gpu_group = parser.add_argument_group("GPU acceleration options")
-    gpu_group.add_argument(
-        "--gpu",
-        "--use-gpu",
-        dest="use_gpu",
-        action="store_true",
-        default=False,
-        help="Use GPU acceleration (requires CUDA and CuPy). Falls back to CPU if GPU not available.",
-    )
-    gpu_group.add_argument(
-        "--gpu-id",
-        dest="gpu_id",
-        metavar="device_id",
-        type=int,
-        default=0,
-        help="GPU device ID to use (default: 0). Use nvidia-smi to list available GPUs.",
-    )
-    gpu_group.add_argument(
-        "--gpu-optimize-transfers",
-        dest="optimize_transfers",
-        action="store_true",
-        default=True,
-        help="Use Phase 2 optimizations to reduce CPU↔GPU transfers (default: enabled). "
-             "Provides 3-6x speedup over Phase 1. Disable for debugging with --no-gpu-optimize-transfers.",
-    )
-    gpu_group.add_argument(
-        "--no-gpu-optimize-transfers",
-        dest="optimize_transfers",
-        action="store_false",
-        help="Disable Phase 2 transfer optimizations (use Phase 1 implementation).",
-    )
-    gpu_group.add_argument(
-        "--gpu-profile",
-        dest="gpu_profile",
-        action="store_true",
-        default=False,
-        help="Enable GPU profiling to measure performance of different operations. "
-             "Prints detailed timing breakdown at end of decode.",
-    )
-    parser.add_argument(
-        "--no-json-output",
-        dest="disable_json_output",
-        action="store_true",
-        default=False,
-        help="Skip writing .tbc.json during decode (improves performance)."
-    )
-    gpu_group.add_argument(
-        "--batch-processing",
-        dest="use_batch_processing",
-        action="store_true",
-        default=False,
-        help="Enable GPU batch processing to reduce PCIe transfer overhead (Phase 3). "
-             "Processes multiple blocks together for significant speedup. Default: disabled (experimental).",
-    )
-    gpu_group.add_argument(
-        "--batch-size",
-        dest="batch_size",
-        metavar="size",
-        type=int,
-        default=None,
-        help="Number of blocks to process per GPU batch (default: auto-detect based on VRAM). "
-             "Larger batches reduce overhead but use more VRAM. Minimum: 10.",
-    )
-    gpu_group.add_argument(
-        "--fused-fm-kernel",
-        dest="use_fused_fm_kernel",
-        action="store_true",
-        default=True,
-        help="Use fused FM demodulation CUDA kernel for ~4× speedup (Phase 4, default: enabled).",
-    )
-    gpu_group.add_argument(
-        "--no-fused-fm-kernel",
-        dest="use_fused_fm_kernel",
-        action="store_false",
-        help="Disable fused FM kernel (use separate CuPy operations for debugging).",
+        help=(
+            "Open a ZMQ pipe back and forth to GNU Radio for RF AFE/EQ/Group delay"
+            " measurements. (WIP)\nYou might want to use this with -t 1"
+        ),
     )
 
     args = parser.parse_args(args)
@@ -418,7 +433,8 @@ def main(args=None, use_gui=False):
 
         if conflicts:
             print(
-                "Existing decode files found, remove them or run command with --overwrite"
+                "Existing decode files found, remove them or run command with"
+                " --overwrite"
             )
             for conflict in conflicts:
                 print("\t", conflict)
@@ -470,6 +486,8 @@ def main(args=None, use_gui=False):
     rf_options["disable_right_hsync"] = args.disable_right_hsync
     rf_options["level_detect_divisor"] = args.level_detect_divisor
     rf_options["fallback_vsync"] = args.fallback_vsync
+    rf_options["relaxed_line0"] = args.relaxed_line0
+    rf_options["field_order_confidence"] = int(max(0, min(100, args.field_order_confidence)))
     rf_options["saved_levels"] = args.saved_levels
     rf_options["skip_hsync_refine"] = args.skip_hsync_refine
     rf_options["export_raw_tbc"] = args.export_raw_tbc
@@ -479,13 +497,6 @@ def main(args=None, use_gui=False):
 
     extra_options = get_extra_options(args, not use_gui)
     extra_options["params_file"] = args.params_file
-    extra_options["use_gpu"] = args.use_gpu
-    extra_options["gpu_id"] = args.gpu_id
-    extra_options["optimize_transfers"] = args.optimize_transfers
-    extra_options["enable_profiling"] = args.gpu_profile
-    extra_options["use_batch_processing"] = args.use_batch_processing
-    extra_options["batch_size"] = args.batch_size
-    extra_options["use_fused_fm_kernel"] = args.use_fused_fm_kernel
 
     # Wrap the LDdecode creation so that the signal handler is not taken by sub-threads,
     # allowing SIGINT/control-C's to be handled cleanly
@@ -520,7 +531,13 @@ def main(args=None, use_gui=False):
         rf_options=rf_options,
         extra_options=extra_options,
         debug_plot=debug_plot,
+        field_order_action=args.field_order_action
     )
+
+    if check_debug():
+        logger.warning(
+            "Rust modules are compiled in debug mode! vhs-decode will run slower."
+        )
 
     signal.signal(signal.SIGINT, original_sigint_handler)
 
@@ -534,28 +551,20 @@ def main(args=None, use_gui=False):
 
     done = False
 
-    jsondumper = None if args.disable_json_output else lddu.jsondump_thread(vhsd, outname)
+    jsondumper = lddu.JSONDumper(vhsd, outname)
 
     def cleanup():
-        if jsondumper:
-            jsondumper.put(vhsd.build_json())
+        jsondumper.close()
         vhsd.close()
-        if jsondumper:
-            jsondumper.put(None)
 
-    # TODO: Put the stuff below this in a function so we can re-use for both vhs and cvbs
-
-    # seconddecode is taken so that setup time is not included in FPS calculation
-    firstdecode = time.time()
-    seconddecode = None
+    logger.debug("Sys Parameters: \n" + json.dumps(vhsd.rf.SysParams, sort_keys=True, indent=4))
+    logger.debug("RF Parameters: \n" + json.dumps(vhsd.rf.DecoderParams, sort_keys=True, indent=4))
 
     while not done and vhsd.fields_written < (req_frames * 2):
         try:
             f = vhsd.readfield()
-            if not seconddecode:
-                seconddecode = time.time()
         except KeyboardInterrupt:
-            print("Terminated, saving JSON and exiting")
+            print("\nTerminated, saving JSON and exiting")
             cleanup()
             sys.exit(1)
         except Exception as err:
@@ -575,29 +584,13 @@ def main(args=None, use_gui=False):
         else:
             f.prevfield = None
 
-        if jsondumper and (vhsd.fields_written < 100 or ((vhsd.fields_written % 500) == 0)):
-            jsondumper.put(vhsd.build_json())
+        if vhsd.fields_written < 100 or ((vhsd.fields_written % 500) == 0):
+            jsondumper.write()
 
     if vhsd.fields_written:
-        timeused = time.time() - firstdecode
-        timeused2 = time.time() - seconddecode
-        frames = vhsd.fields_written // 2
-        fps = frames / timeused2
-
-        print(
-            f"\nCompleted: saving JSON and exiting.  Took {timeused:.2f} seconds to decode {frames} frames ({fps:.2f} FPS post-setup)",
-            file=sys.stderr,
-        )
+        print("\nCompleted: saving JSON and exiting.", file=sys.stderr)
     else:
-        print(f"\nCompleted without handling any frames.", file=sys.stderr)
-
-    # Print GPU profiling summary if enabled
-    if args.gpu_profile and args.use_gpu:
-        try:
-            vhsd.rf.print_profiling_summary()
-        except (AttributeError, Exception) as e:
-            logger.warning(f"Could not print GPU profiling summary: {e}")
-            traceback.print_exc()
+        print("\nCompleted without handling any frames.", file=sys.stderr)
 
     cleanup()
     sys.exit(0)
