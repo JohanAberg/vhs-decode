@@ -263,8 +263,10 @@ int main(int argc, char* argv[]) {
             rf::RFProcessor::Config rfConfig;
             rfConfig.sampleRateMHz = config.inputFreqMHz;
             rfConfig.blockSize = config.blockSize;
-            rfConfig.rfBandpassLowMHz = 0.5;
-            rfConfig.rfBandpassHighMHz = 18.0;
+            // VHS PAL video carrier bandpass (from vhsdecode/format_defs/vhs.py)
+            // video_bpf_low = 1.3 MHz, video_bpf_high = 5.78 MHz
+            rfConfig.rfBandpassLowMHz = 1.3;
+            rfConfig.rfBandpassHighMHz = 5.78;
             rfConfig.useGPU = useGPU;
             
             rf::RFProcessor rfProcessor(rfConfig);
@@ -302,6 +304,32 @@ int main(int argc, char* argv[]) {
             if (reader.getFileSize() >= config.blockSize) {
                 std::cout << "\nProcessing RF block through full pipeline...\n";
                 auto rfBlock = reader.readBlock(config.blockSize, 0);
+                
+                // Debug: Show raw input stats
+                uint8_t minRaw = rfBlock.data[0];
+                uint8_t maxRaw = rfBlock.data[0];
+                double avgRaw = 0.0;
+                for (size_t i = 0; i < rfBlock.data.size(); ++i) {
+                    minRaw = std::min(minRaw, rfBlock.data[i]);
+                    maxRaw = std::max(maxRaw, rfBlock.data[i]);
+                    avgRaw += rfBlock.data[i];
+                }
+                avgRaw /= rfBlock.data.size();
+                std::cout << "  Raw input stats (uint8): min=" << (int)minRaw 
+                          << " max=" << (int)maxRaw 
+                          << " avg=" << std::fixed << std::setprecision(1) << avgRaw 
+                          << " range=" << (int)(maxRaw - minRaw) << "\n";
+                
+                // Check if input has sufficient signal
+                int signalRange = maxRaw - minRaw;
+                if (signalRange < 50) {
+                    std::cout << "  ⚠ WARNING: Input signal range is very low (" << signalRange 
+                              << "). Expected range ~100-200 for valid VHS RF capture.\n";
+                    std::cout << "    This may indicate:\n";
+                    std::cout << "    - No RF signal in the capture\n";
+                    std::cout << "    - Wrong file format or corrupted file\n";
+                    std::cout << "    - Recording level too low during capture\n";
+                }
                 
                 auto rfResult = rfProcessor.processBlock(rfBlock.data);
                 
@@ -386,21 +414,66 @@ int main(int argc, char* argv[]) {
                 // FM demodulate (reuse existing object)
                 auto fmResult = fmDemod.demodulate(rfResult.analyticSignal);
                 
+                // Debug: print video value range on first block
+                if (blockNum == 0) {
+                    float minVideo = fmResult.video[0];
+                    float maxVideo = fmResult.video[0];
+                    float sumVideo = 0.0f;
+                    for (size_t i = 0; i < fmResult.video.size(); ++i) {
+                        minVideo = std::min(minVideo, fmResult.video[i]);
+                        maxVideo = std::max(maxVideo, fmResult.video[i]);
+                        sumVideo += fmResult.video[i];
+                    }
+                    float avgVideo = sumVideo / fmResult.video.size();
+                    std::cout << "\n  Video signal range (first block):\n";
+                    std::cout << "    Min: " << std::scientific << minVideo << " Hz";
+                    std::cout << " = " << std::fixed << std::setprecision(1) << ((minVideo - 4085714.0f) / 7142.86f) << " IRE\n";
+                    std::cout << "    Max: " << std::scientific << maxVideo << " Hz";
+                    std::cout << " = " << std::fixed << std::setprecision(1) << ((maxVideo - 4085714.0f) / 7142.86f) << " IRE\n";
+                    std::cout << "    Avg: " << std::scientific << avgVideo << " Hz";
+                    std::cout << " = " << std::fixed << std::setprecision(1) << ((avgVideo - 4085714.0f) / 7142.86f) << " IRE\n";
+                    std::cout << "    Expected: sync=" << 3800000.0f << " Hz (-40 IRE), white=4800000 Hz (100 IRE)\n";
+                }
+                
                 // Convert video to 16-bit and add to buffer
+                // FM demodulator outputs frequency in Hz
+                // 
+                // VHS PAL frequency mapping (from vhs-decode Python code):
+                //   vsync_ire = -40 IRE
+                //   hz_ire = 1e6 / (100 + 40) = 7142.86 Hz per IRE
+                //   ire0 = 4.8 MHz - (hz_ire * 100) = 4.085714 MHz  (black level, 0 IRE)
+                //   sync tip (-40 IRE) = 4.085714 - 0.285714 = 3.8 MHz
+                //   peak white (100 IRE) = 4.8 MHz
+                //
+                // Scale from FM frequency to IRE levels (0-65535 where blanking ~= 16384)
+                float ire0Hz = 4085714.0f;       // 0 IRE (black level) in Hz
+                float hzPerIre = 7142.86f;       // Hz per IRE
+                float syncTipIre = -40.0f;       // Sync tip in IRE
+                
+                // IRE 0 maps to ~16384 (blanking), IRE 100 maps to ~60160 (white)
+                // Using standard 16-bit IRE scale: 0 IRE = 16384, 100 IRE = 60160
+                float ire0Digital = 16384.0f;
+                float digitalPerIre = (60160.0f - 16384.0f) / 100.0f;  // ~437.76
+                
                 for (size_t i = 0; i < fmResult.video.size(); ++i) {
-                    // Scale float video to 16-bit range (0-65535)
-                    // Assuming video is normalized around 0, scale to IRE levels
-                    float scaled = (fmResult.video[i] + 1.0f) * 32767.5f;
-                    scaled = std::max(0.0f, std::min(65535.0f, scaled));
-                    videoBuffer.push_back(static_cast<uint16_t>(scaled));
+                    // Convert frequency to IRE: IRE = (freq - ire0) / hzPerIre
+                    float freqHz = fmResult.video[i];
+                    float ire = (freqHz - ire0Hz) / hzPerIre;
+                    
+                    // Convert IRE to 16-bit digital: 0 IRE = 16384, 100 IRE = 60160
+                    float digital = ire0Digital + (ire * digitalPerIre);
+                    digital = std::max(0.0f, std::min(65535.0f, digital));
+                    videoBuffer.push_back(static_cast<uint16_t>(digital));
                 }
                 
                 // Convert chroma to 16-bit and add to buffer
                 for (size_t i = 0; i < fmResult.chroma.size(); ++i) {
-                    // Scale float chroma to 16-bit range (0-65535)
-                    float scaled = (fmResult.chroma[i] + 1.0f) * 32767.5f;
-                    scaled = std::max(0.0f, std::min(65535.0f, scaled));
-                    chromaBuffer.push_back(static_cast<uint16_t>(scaled));
+                    // Chroma uses same frequency-to-IRE scaling for now
+                    float freqHz = fmResult.chroma[i];
+                    float ire = (freqHz - ire0Hz) / hzPerIre;
+                    float digital = ire0Digital + (ire * digitalPerIre);
+                    digital = std::max(0.0f, std::min(65535.0f, digital));
+                    chromaBuffer.push_back(static_cast<uint16_t>(digital));
                 }
                 
                 totalSamplesProcessed += fmResult.video.size();

@@ -9,33 +9,79 @@ namespace demod {
 class FMDemodulator::Impl {
 public:
     ProcessingConfig config;
+    static constexpr float TAU = 2.0f * static_cast<float>(M_PI);
     
     explicit Impl(const ProcessingConfig& cfg) : config(cfg) {}
     
-    // Phase unwrapping helper
-    RealArray unwrapPhase(const ComplexArray& analyticSignal) {
-        RealArray phase(analyticSignal.size());
+    // FM demodulation matching Python's unwrap_hilbert()
+    // Algorithm:
+    // 1. Get phase angles from analytic signal
+    // 2. Compute first difference of angles (ediff1d)
+    // 3. Unwrap the phase differences
+    // 4. Clamp to [0, tau] range for bad data
+    // 5. Scale by (sampleRate / tau) to get frequency in Hz
+    RealArray fmDemodulate(const ComplexArray& analyticSignal, float sampleRate) {
+        const size_t N = analyticSignal.size();
+        RealArray dangles(N);
+        RealArray envelope(N);
         
-        for (size_t i = 0; i < analyticSignal.size(); ++i) {
-            phase[i] = std::arg(analyticSignal[i]);
+        // First pass: compute envelope for gating
+        float maxEnv = 0.0f;
+        for (size_t i = 0; i < N; ++i) {
+            envelope[i] = std::abs(analyticSignal[i]);
+            if (envelope[i] > maxEnv) maxEnv = envelope[i];
         }
         
-        // Simple phase unwrapping
-        for (size_t i = 1; i < phase.size(); ++i) {
-            float diff = phase[i] - phase[i-1];
+        // Envelope threshold for valid signal (10% of max)
+        float envThreshold = maxEnv * 0.1f;
+        
+        // Expected frequency for blanking (when no signal)
+        // Use approximate video carrier center frequency
+        float blankingFreq = 4.0e6f;  // 4 MHz - approximate video carrier
+        
+        // Step 1: Get phase angles and compute first difference
+        float prevAngle = std::arg(analyticSignal[0]);
+        dangles[0] = 0.0f;  // to_begin=0 in Python ediff1d
+        
+        for (size_t i = 1; i < N; ++i) {
+            // Gate: if envelope is too low, skip phase tracking
+            if (envelope[i] < envThreshold || envelope[i-1] < envThreshold) {
+                dangles[i] = blankingFreq * TAU / sampleRate;  // Use blanking frequency
+                prevAngle = std::arg(analyticSignal[i]);  // Reset phase tracking
+                continue;
+            }
             
-            // Unwrap if jump > π
-            while (diff > M_PI) {
-                phase[i] -= 2.0f * M_PI;
-                diff = phase[i] - phase[i-1];
+            float currAngle = std::arg(analyticSignal[i]);
+            dangles[i] = currAngle - prevAngle;
+            prevAngle = currAngle;
+            
+            // Normalize to [-pi, pi] range (unwrap)
+            while (dangles[i] > static_cast<float>(M_PI)) {
+                dangles[i] -= TAU;
             }
-            while (diff < -M_PI) {
-                phase[i] += 2.0f * M_PI;
-                diff = phase[i] - phase[i-1];
+            while (dangles[i] < -static_cast<float>(M_PI)) {
+                dangles[i] += TAU;
             }
         }
         
-        return phase;
+        // Step 3: Clamp to [0, tau] range to handle bad data
+        for (size_t i = 0; i < N; ++i) {
+            while (dangles[i] < 0.0f) {
+                dangles[i] += TAU;
+            }
+            while (dangles[i] > TAU) {
+                dangles[i] -= TAU;
+            }
+        }
+        
+        // Step 4: Scale to frequency in Hz
+        // Formula: freq = dangles * (sampleRate / tau)
+        float scale = sampleRate / TAU;
+        for (size_t i = 0; i < N; ++i) {
+            dangles[i] *= scale;
+        }
+        
+        return dangles;
     }
     
     // Envelope detection
@@ -47,18 +93,6 @@ public:
         }
         
         return envelope;
-    }
-    
-    // Differentiate phase to get frequency (FM demod)
-    RealArray phaseToFrequency(const RealArray& phase, float sampleRate) {
-        RealArray freq(phase.size());
-        
-        freq[0] = 0.0f;
-        for (size_t i = 1; i < phase.size(); ++i) {
-            freq[i] = (phase[i] - phase[i-1]) * sampleRate / (2.0f * M_PI);
-        }
-        
-        return freq;
     }
 };
 
@@ -76,17 +110,14 @@ FMDemodulator& FMDemodulator::operator=(FMDemodulator&&) noexcept = default;
 FMDemodulator::Result FMDemodulator::demodulate(const ComplexArray& analyticSignal) {
     Result result;
     
-    // 1. Unwrap phase
-    auto phase = impl_->unwrapPhase(analyticSignal);
-    
-    // 2. Differentiate phase to get frequency (FM demodulation)
+    // FM demodulation using Python-compatible algorithm
     float sampleRate = config_.inputFreqMHz * 1e6f;  // Convert MHz to Hz
-    result.video = impl_->phaseToFrequency(phase, sampleRate);
+    result.video = impl_->fmDemodulate(analyticSignal, sampleRate);
     
-    // 3. Detect envelope for dropout detection
+    // Detect envelope for dropout detection
     result.envelope = impl_->detectEnvelope(analyticSignal);
     
-    // 4. For now, copy video to video05 and chroma
+    // For now, copy video to video05 and chroma
     // TODO: Implement proper filtering
     result.video05 = result.video;
     result.chroma = result.video;

@@ -396,5 +396,84 @@ filtered = signal.sosfiltfilt(sos_filter, data)  # CPU only for now
 - Bug fixes: [GPU_BUG_FIX_SUMMARY.md](GPU_BUG_FIX_SUMMARY.md)
 - **Profiling guide: [GPU_PROFILING_GUIDE.md](GPU_PROFILING_GUIDE.md)** ← Use this for optimization work
 - **Optimization targets: [GPU_OPTIMIZATION_ANALYSIS.md](GPU_OPTIMIZATION_ANALYSIS.md)** ← Roadmap for speedups
+- **C++ Prototype status: [cpp-prototype/CPP_PROTOTYPE_STATUS.md](cpp-prototype/CPP_PROTOTYPE_STATUS.md)** ← C++ implementation details
 
 Following these guidelines ensures both GPU acceleration and general development are correct, fast, and maintainable.
+
+## C++ Prototype (Dec 21, 2025)
+
+The `cpp-prototype/` directory contains a C++ implementation of the VHS RF decoder,
+designed for GPU acceleration via OpenCL.
+
+### Quick Start - C++ Prototype
+
+```bash
+# Build
+cd cpp-prototype
+mkdir -p build && cd build
+cmake ..
+cmake --build . --parallel 8
+
+# Run decode
+./src/vhs-decode --system PAL --length 10 input.u8 output
+```
+
+### Working Components
+- **RF Reader:** Memory-mapped file I/O for efficient large file handling
+- **FFT Engine:** FFTW3 (single-precision) for FFT/iFFT
+- **Filter Bank:** Frequency-domain bandpass/lowpass/highpass filters
+- **Hilbert Transform:** Analytic signal generation
+- **FM Demodulator:** Phase extraction and frequency scaling
+- **Video Scaling:** VHS PAL frequency-to-IRE mapping
+- **TBC Writer:** .tbc and .tbc.json output
+
+### VHS PAL Parameters (from vhsdecode/format_defs/vhs.py)
+```cpp
+// RF Bandpass: 1.3 - 5.78 MHz
+rfConfig.rfBandpassLowMHz = 1.3;
+rfConfig.rfBandpassHighMHz = 5.78;
+
+// Frequency to IRE mapping
+float ire0Hz = 4085714.0f;       // 0 IRE (black level)
+float hzPerIre = 7142.86f;       // Hz per IRE
+// Sync tip (-40 IRE) at 3.8 MHz
+// Peak white (100 IRE) at 4.8 MHz
+
+// Digital scaling
+float ire0Digital = 16384.0f;    // 0 IRE in 16-bit
+float digitalPerIre = 437.76f;   // ~(60160-16384)/100
+```
+
+### Missing Components (TODO)
+- **Horizontal sync detection** - Lines not aligned yet
+- **Time-base correction** - No wow/flutter compensation
+- **Vertical sync detection** - Field boundaries not detected
+- **Dropout detection** - Not implemented
+- **Chroma processing** - Currently copies luma
+
+### Key Files
+- `cpp-prototype/src/core/main.cpp` - Entry point
+- `cpp-prototype/src/rf/rf_processor.cpp` - RF pipeline
+- `cpp-prototype/src/demod/fm_demodulator.cpp` - FM demodulation
+- `cpp-prototype/CPP_PROTOTYPE_STATUS.md` - Detailed status
+
+### Testing C++ Output
+```bash
+# Compare with Python decoder
+python decode.py vhs --system PAL --length 5 input.u8 python_output
+
+# Extract field as image for visual inspection
+python3 << 'EOF'
+import numpy as np
+from PIL import Image
+data = np.fromfile('test_output.tbc', dtype=np.uint16)[:1135*312]
+img = ((data.reshape(312, 1135) / 65535) * 255).astype(np.uint8)
+Image.fromarray(img).save('field1.png')
+EOF
+```
+
+### C++ Development Guidelines
+- Use FFTW3f (single-precision) for main processing
+- Match Python filter parameters from `vhsdecode/format_defs/vhs.py`
+- Keep CPU fallback for all GPU operations
+- Test against Python decoder output for validation
