@@ -9,6 +9,7 @@ set(SOURCES
     rf/hilbert.cpp
     rf/rf_processor.cpp
     demod/fm_demodulator.cpp
+    sync/sync_detector.cpp
     video/dropout_corrector.cpp
     video/tbc_corrector.cpp
     core/block_processor.cpp

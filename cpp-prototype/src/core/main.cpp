@@ -13,6 +13,7 @@
 #include "vhsdecode/filter_bank.hpp"
 #include "vhsdecode/hilbert.hpp"
 #include "vhsdecode/rf_processor.hpp"
+#include "vhsdecode/sync_detector.hpp"
 #include "formats/format_base.hpp"
 #include "formats/vhs_format.hpp"
 
@@ -368,11 +369,17 @@ int main(int argc, char* argv[]) {
             std::cout << "FULL FILE DECODE: Processing All Blocks\n";
             std::cout << std::string(60, '=') << "\n";
             
+            // Compute line length at output sample rate
+            // PAL: 64µs * 40 MHz = 2560 samples
+            // NTSC: 63.556µs * 40 MHz = 2542 samples
+            double linePeriodUS = (config.system.system == TVSystem::PAL) ? 64.0 : 63.556;
+            size_t outputLineLen = static_cast<size_t>(linePeriodUS * config.inputFreqMHz);
+            
             // Setup video parameters for metadata
             VideoParameters videoParams;
             videoParams.system = systemToString(config.system.system);
             videoParams.tapeFormat = "VHS";
-            videoParams.fieldWidth = 1135; // PAL standard
+            videoParams.fieldWidth = outputLineLen;  // Raw sample rate line length
             videoParams.fieldHeight = config.system.fieldLines[0];
             videoParams.sampleRate = config.inputFreqMHz * 1e6;
             videoParams.numberOfSequentialFields = 0; // Will update as we write
@@ -380,25 +387,47 @@ int main(int argc, char* argv[]) {
             
             // Calculate total blocks to process
             size_t totalBlocks = (reader.getFileSize() + config.blockSize - 1) / config.blockSize;
-            size_t samplesPerLine = 1135; // PAL standard
+            // samplesPerLine is already computed as outputLineLen above
+            size_t samplesPerLine = outputLineLen;
             size_t samplesPerField = samplesPerLine * config.system.fieldLines[0];
             
             std::cout << "\nProcessing parameters:\n";
             std::cout << "  Total file size: " << reader.getFileSize() << " bytes\n";
             std::cout << "  Block size: " << config.blockSize << " samples\n";
             std::cout << "  Total blocks: " << totalBlocks << "\n";
-            std::cout << "  Samples per line: " << samplesPerLine << "\n";
+            std::cout << "  Line period: " << linePeriodUS << " µs\n";
+            std::cout << "  Samples per line: " << samplesPerLine << " (at " << config.inputFreqMHz << " MHz)\n";
             std::cout << "  Samples per field: " << samplesPerField << "\n";
             std::cout << "  Expected fields: ~" << (reader.getFileSize() / samplesPerField) << "\n\n";
             
             // Process blocks and assemble fields
             std::vector<uint16_t> videoBuffer;
             std::vector<uint16_t> chromaBuffer;
+            std::vector<float> videoFloatBuffer;  // For sync detection (float domain)
             videoBuffer.reserve(samplesPerField * 2);
             chromaBuffer.reserve(samplesPerField * 2);
+            videoFloatBuffer.reserve(samplesPerField * 2);
             size_t fieldCount = 0;
             size_t totalSamplesProcessed = 0;
             size_t lastProgressPercent = 0;
+            
+            // Setup sync detector
+            sync::SyncConfig syncConfig;
+            syncConfig.sampleRateMHz = config.inputFreqMHz;
+            syncConfig.lineFreqHz = config.system.system == TVSystem::PAL ? 15625.0 : 15734.26;
+            syncConfig.linesPerField = config.system.fieldLines[0];
+            sync::SyncDetector syncDetector(syncConfig);
+            
+            // Sync threshold in digital units (sync at -40 IRE = ~-40 * 437.76 + 16384 ≈ -1127)
+            // Actually sync tip is below blanking, so threshold should be around 10000-12000
+            float syncThresholdDigital = 12000.0f;  // Below blanking level (16384)
+            float expectedLineLen = static_cast<float>(syncConfig.samplesPerLine());
+            bool useSyncDetection = true;
+            
+            std::cout << "Sync detection enabled:\n";
+            std::cout << "  Line frequency: " << syncConfig.lineFreqHz << " Hz\n";
+            std::cout << "  Samples per line: " << expectedLineLen << "\n";
+            std::cout << "  Sync threshold: " << syncThresholdDigital << " (digital units)\n";
             
             std::cout << "Decoding: [";
             std::cout.flush();
@@ -464,6 +493,7 @@ int main(int argc, char* argv[]) {
                     float digital = ire0Digital + (ire * digitalPerIre);
                     digital = std::max(0.0f, std::min(65535.0f, digital));
                     videoBuffer.push_back(static_cast<uint16_t>(digital));
+                    videoFloatBuffer.push_back(digital);  // Keep float copy for sync detection
                 }
                 
                 // Convert chroma to 16-bit and add to buffer
@@ -479,40 +509,125 @@ int main(int argc, char* argv[]) {
                 totalSamplesProcessed += fmResult.video.size();
                 
                 // Check if we have enough samples for a field
-                while (videoBuffer.size() >= samplesPerField && chromaBuffer.size() >= samplesPerField) {
-                    // Calculate how many samples we actually need
+                while (videoBuffer.size() >= samplesPerField && chromaBuffer.size() >= samplesPerField && 
+                       videoFloatBuffer.size() >= samplesPerField) {
+                    
                     size_t samplesNeeded = samplesPerLine * config.system.fieldLines[fieldCount % 2];
                     
-                    // Extract one field worth of video data
-                    VideoField field;
-                    size_t sampleIdx = 0;
+                    // Run sync detection on accumulated video data
+                    std::vector<size_t> lineStarts;
+                    int detectedLineLength = static_cast<int>(samplesPerLine);
+                    bool syncFound = false;
                     
-                    for (size_t line = 0; line < config.system.fieldLines[fieldCount % 2]; ++line) {
-                        VideoLine videoLine(samplesPerLine);
-                        for (size_t s = 0; s < samplesPerLine && sampleIdx < videoBuffer.size(); ++s) {
-                            videoLine[s] = videoBuffer[sampleIdx++];
+                    if (useSyncDetection && videoFloatBuffer.size() >= samplesNeeded) {
+                        // Create RealArray for sync detection
+                        RealArray videoForSync(videoFloatBuffer.begin(), 
+                                               videoFloatBuffer.begin() + samplesNeeded);
+                        
+                        // Find sync pulses
+                        auto pulses = syncDetector.findPulses(videoForSync, syncThresholdDigital);
+                        
+                        if (!pulses.empty()) {
+                            // Compute line locations from pulses
+                            auto lineInfos = syncDetector.computeLineLocations(pulses, expectedLineLen);
+                            
+                            // Convert to simple line start positions
+                            for (const auto& info : lineInfos) {
+                                if (info.valid) {
+                                    lineStarts.push_back(static_cast<size_t>(info.startSample));
+                                }
+                            }
+                            
+                            if (!lineStarts.empty()) {
+                                // Estimate detected line length from first few lines
+                                if (lineStarts.size() >= 2) {
+                                    detectedLineLength = static_cast<int>(lineStarts[1] - lineStarts[0]);
+                                }
+                                syncFound = true;
+                                
+                                // Debug: print sync info on first field
+                                if (fieldCount == 0) {
+                                    std::cout << "\n  Sync detection results (first field):\n";
+                                    std::cout << "    Pulses found: " << pulses.size() << "\n";
+                                    std::cout << "    Lines detected: " << lineStarts.size() << "\n";
+                                    std::cout << "    Detected line length: " << detectedLineLength << " samples\n";
+                                    if (lineStarts.size() >= 3) {
+                                        std::cout << "    First 3 line starts: ";
+                                        for (size_t i = 0; i < 3; ++i) {
+                                            std::cout << lineStarts[i] << " ";
+                                        }
+                                        std::cout << "\n";
+                                    }
+                                }
+                            }
                         }
+                    }
+                    
+                    // If no sync found, use fixed line positions (fallback)
+                    if (!syncFound) {
+                        lineStarts.clear();
+                        for (size_t line = 0; line < static_cast<size_t>(config.system.fieldLines[fieldCount % 2]); ++line) {
+                            lineStarts.push_back(line * samplesPerLine);
+                        }
+                    }
+                    
+                    // Extract video field using detected or fixed line starts
+                    VideoField field;
+                    size_t samplesConsumed = 0;
+                    
+                    for (size_t lineIdx = 0; lineIdx < std::min(lineStarts.size(), 
+                            static_cast<size_t>(config.system.fieldLines[fieldCount % 2])); ++lineIdx) {
+                        VideoLine videoLine(samplesPerLine);
+                        size_t lineStart = lineStarts[lineIdx];
+                        
+                        for (size_t s = 0; s < samplesPerLine; ++s) {
+                            size_t idx = lineStart + s;
+                            if (idx < videoBuffer.size()) {
+                                videoLine[s] = videoBuffer[idx];
+                            } else {
+                                videoLine[s] = 16384;  // Fill with blanking level if out of range
+                            }
+                        }
+                        field.push_back(videoLine);
+                        
+                        // Track the furthest sample consumed
+                        if (lineStart + samplesPerLine > samplesConsumed) {
+                            samplesConsumed = lineStart + samplesPerLine;
+                        }
+                    }
+                    
+                    // Fill remaining lines if sync didn't find enough
+                    while (field.size() < static_cast<size_t>(config.system.fieldLines[fieldCount % 2])) {
+                        VideoLine videoLine(samplesPerLine, 16384);  // Blanking level
                         field.push_back(videoLine);
                     }
                     
-                    // Extract one field worth of chroma data
+                    // Extract chroma field (same line positions as video)
                     VideoField chromaField;
-                    size_t chromaIdx = 0;
-                    
-                    for (size_t line = 0; line < config.system.fieldLines[fieldCount % 2]; ++line) {
+                    for (size_t lineIdx = 0; lineIdx < std::min(lineStarts.size(),
+                            static_cast<size_t>(config.system.fieldLines[fieldCount % 2])); ++lineIdx) {
                         VideoLine chromaLine(samplesPerLine);
-                        for (size_t s = 0; s < samplesPerLine && chromaIdx < chromaBuffer.size(); ++s) {
-                            chromaLine[s] = chromaBuffer[chromaIdx++];
+                        size_t lineStart = lineStarts[lineIdx];
+                        
+                        for (size_t s = 0; s < samplesPerLine; ++s) {
+                            size_t idx = lineStart + s;
+                            if (idx < chromaBuffer.size()) {
+                                chromaLine[s] = chromaBuffer[idx];
+                            } else {
+                                chromaLine[s] = 32768;  // Mid-level for chroma
+                            }
                         }
                         chromaField.push_back(chromaLine);
                     }
                     
-                    // Safety check: if we didn't consume enough samples, break to avoid infinite loop
-                    if (sampleIdx < samplesNeeded || chromaIdx < samplesNeeded) {
-                        std::cerr << "Warning: Field incomplete, got " << sampleIdx << " video and " 
-                                  << chromaIdx << " chroma samples, needed " << samplesNeeded << "\n";
-                        break;
+                    // Fill remaining chroma lines if needed
+                    while (chromaField.size() < static_cast<size_t>(config.system.fieldLines[fieldCount % 2])) {
+                        VideoLine chromaLine(samplesPerLine, 32768);
+                        chromaField.push_back(chromaLine);
                     }
+                    
+                    // Determine samples to remove based on what we actually consumed
+                    samplesConsumed = std::max(samplesConsumed, samplesNeeded);
                     
                     // Write video and chroma fields to TBC
                     writer.writeVideoField(field, fieldCount);
@@ -540,10 +655,12 @@ int main(int argc, char* argv[]) {
                     }
                     
                     // Remove processed samples from buffers
-                    size_t samplesToRemove = std::min(samplesNeeded, videoBuffer.size());
+                    size_t samplesToRemove = std::min(samplesConsumed, videoBuffer.size());
                     videoBuffer.erase(videoBuffer.begin(), videoBuffer.begin() + samplesToRemove);
-                    samplesToRemove = std::min(samplesNeeded, chromaBuffer.size());
+                    samplesToRemove = std::min(samplesConsumed, chromaBuffer.size());
                     chromaBuffer.erase(chromaBuffer.begin(), chromaBuffer.begin() + samplesToRemove);
+                    samplesToRemove = std::min(samplesConsumed, videoFloatBuffer.size());
+                    videoFloatBuffer.erase(videoFloatBuffer.begin(), videoFloatBuffer.begin() + samplesToRemove);
                 }
                 
                 // Progress indicator

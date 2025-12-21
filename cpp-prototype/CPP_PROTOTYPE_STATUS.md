@@ -51,6 +51,16 @@ It serves as a foundation for GPU acceleration via OpenCL.
 - Writes _chroma.tbc chroma files
 - Writes .tbc.json metadata with proper PAL parameters
 
+### 8. Sync Detection (`src/sync/sync_detector.cpp`) ← NEW
+- Finds horizontal sync pulses in demodulated video
+- Computes line start positions from pulse locations
+- Aligns video lines to sync pulses for proper TBC output
+- **Results on test file:**
+  - 325 pulses found per field
+  - 301 lines detected (expected: 312)
+  - Detected line length: 2558 samples (expected: 2560)
+  - Sync positions now consistent at pos 2-3 (was random before)
+
 ## Test Results
 
 ### With Valid RF Capture (out1.u8)
@@ -58,40 +68,41 @@ It serves as a foundation for GPU acceleration via OpenCL.
 Raw input stats (uint8): min=31 max=223 avg=126.1 range=192
 Envelope stats: Min=0.27, Max=0.73, Avg=0.50
 Video frequency: Min=0, Max=5.6MHz, Avg=4.1MHz (8.9 IRE)
+
+Sync detection (first field):
+  Pulses found: 325
+  Lines detected: 301
+  Detected line length: 2558 samples
+  First 3 line starts: 1367, 3925, 6482 (spacing ~2558 ✓)
 ```
 
-### Output Comparison (C++ vs Python decoder)
-- C++ output: Mean=21829, Std=11427
-- Python output: Mean=20005, Std=6830
-- Both produce valid 16-bit video data
-- **Key difference**: Python output has aligned sync pulses, C++ does not
+### Line Alignment Verification
+```
+Line 0: sync min at pos 2
+Line 1: sync min at pos 2
+Line 2: sync min at pos 3
+Line 3: sync min at pos 2
+Line 4: sync min at pos 2
+```
+Lines are now aligned to horizontal sync!
 
 ## Missing Components (Not Yet Implemented)
 
-### 1. Horizontal Sync Detection (CRITICAL - NEXT)
-The Python output shows sync pulses consistently at positions 4-7 of each line.
-The C++ output has sync pulses at random positions - lines are not aligned.
-
-**Required for proper video output:**
-- Detect horizontal sync pulses (low values in demodulated signal)
-- Calculate line start positions
-- Align samples to create proper video lines
-
-### 2. Time-Base Correction
+### 1. Time-Base Correction (NEXT PRIORITY)
 - Compensate for tape speed variations
-- Interpolate samples to exact line length
+- Interpolate samples to exact line length (resample 2560 → 1135)
 - Handle wow and flutter
 
-### 3. Vertical Sync Detection
+### 2. Vertical Sync Detection
 - Identify field boundaries
 - Detect first/second field
 - Handle non-standard sync patterns
 
-### 4. Dropout Detection/Compensation
+### 3. Dropout Detection/Compensation
 - Use envelope signal to detect dropouts
 - Replace dropout samples with interpolated data
 
-### 5. Color Processing
+### 4. Color Processing
 - Color burst detection and phase measurement
 - Chroma separation (currently just copies luma)
 - PAL/NTSC color decoding
@@ -131,6 +142,8 @@ cpp-prototype/
 │   │   └── hilbert.cpp        # Hilbert transform
 │   ├── demod/
 │   │   └── fm_demodulator.cpp # FM demodulation
+│   ├── sync/
+│   │   └── sync_detector.cpp  # Horizontal sync detection (NEW)
 │   ├── fft/
 │   │   └── fft_engine.cpp     # FFTW3 wrapper
 │   ├── output/
@@ -151,7 +164,7 @@ cpp-prototype/
 
 ## Next Steps
 
-1. **Implement sync detection** - Find horizontal sync pulses and align lines
-2. **Add time-base correction** - Handle tape speed variations
+1. ~~**Implement sync detection**~~ ✓ - Find horizontal sync pulses and align lines
+2. **Add time-base correction** - Resample 2560 samples → 1135 (4×fsc rate)
 3. **Implement vertical sync** - Proper field detection
 4. **GPU acceleration** - Port critical paths to OpenCL
