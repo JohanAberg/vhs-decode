@@ -1,0 +1,141 @@
+2025-12-21 19:11:05,369 - lddecode - WARNING - Rust modules are compiled in debug mode! vhs-decode will run slower.
+2025-12-21 19:11:05,384 - lddecode - DEBUG - Sys Parameters: 
+{
+    "FPS": 25,
+    "LD_VITS_code_slices": [
+        [
+            16,
+            11,
+            49,
+            85
+        ],
+        [
+            17,
+            11,
+            49,
+            85
+        ]
+    ],
+    "LD_VITS_whitelocs": [
+        [
+            19,
+            12,
+            8
+        ]
+    ],
+    "activeVideoUS": [
+        10.5,
+        62.5
+    ],
+    "analog_audio": false,
+    "audio_lfreq": 683593.75,
+    "audio_rfreq": 1066406.25,
+    "blacksnr_slice": [
+        22,
+        12,
+        50
+    ],
+    "burst_abs_ref": 5000,
+    "colorBurstUS": [
+        5.6,
+        7.85
+    ],
+    "eqPulseUS": 2.35,
+    "fieldPhases": 8,
+    "field_lines": [
+        312,
+        313
+    ],
+    "firstFieldH": [
+        1,
+        0.5
+    ],
+    "frame_lines": 625,
+    "fsc_mhz": 4.43361875,
+    "hsyncPulseUS": 4.7,
+    "hz_ire": 7000.0,
+    "ire0": 4100000.0,
+    "line_period": 64,
+    "numPulses": 5,
+    "outfreq": 17.734475,
+    "outlinelen": 1135,
+    "outlinelen_pilot": 960,
+    "outputZero": 256,
+    "pilot_mhz": 3.75,
+    "vsyncPulseUS": 27.3,
+    "vsync_ire": -42.857142857142854
+}
+2025-12-21 19:11:05,385 - lddecode - DEBUG - RF Parameters: 
+{
+    "MTF_basemult": 1.0,
+    "MTF_freq": 10,
+    "MTF_poledist": 0.7,
+    "audio_filterorder": 900,
+    "audio_filterwidth": 100000,
+    "audio_notchorder": 2,
+    "audio_notchwidth": 200000,
+    "boost_bpf_high": 5600000,
+    "boost_bpf_low": 4200000,
+    "boost_bpf_mult": null,
+    "boost_rf_linear_0": 0,
+    "boost_rf_linear_20": 1,
+    "boost_rf_linear_double": false,
+    "chroma_bpf_upper": 1300000,
+    "chroma_rotation": [
+        0,
+        -1
+    ],
+    "color_under_carrier": 626953,
+    "deemph_gain": 13.9794,
+    "deemph_mid": 273755.82,
+    "deemph_q": 0.462088186,
+    "deemph_tau": 1.3e-06,
+    "fm_audio_channel_0_freq": 1400000,
+    "fm_audio_channel_1_freq": 1800000,
+    "hz_ire": 7000.0,
+    "ire0": 4100000.0,
+    "nonlinear_exp_scaling": 0.06,
+    "nonlinear_highpass_freq": 820000,
+    "nonlinear_highpass_limit_h": 5000,
+    "nonlinear_highpass_limit_l": -20000,
+    "nonlinear_scaling_1": 0.5,
+    "start_rf_linear": 626953,
+    "track_ire0_offset": [
+        0,
+        0
+    ],
+    "use_sub_deemphasis": false,
+    "video_bpf_high": 5780000,
+    "video_bpf_low": 1300000,
+    "video_bpf_order": null,
+    "video_bpf_supergauss": false,
+    "video_deemp": [
+        1e-07,
+        4e-07
+    ],
+    "video_eq": {
+        "loband": {
+            "corner": 2620000.0,
+            "gain": 2,
+            "order_limit": 20,
+            "transition": 500000.0
+        }
+    },
+    "video_hpf_extra": 1320000,
+    "video_hpf_extra_order": 12,
+    "video_hpf_freq": 10000000,
+    "video_hpf_order": 4,
+    "video_lpf_extra": 5910000,
+    "video_lpf_extra_order": 20,
+    "video_lpf_freq": 3400000,
+    "video_lpf_order": 6,
+    "video_rf_peak_bandwidth": 10000000.0,
+    "video_rf_peak_freq": 4300000,
+    "video_rf_peak_gain": 4,
+    "vsync_ire": -42.857142857142854
+}
+2025-12-21 19:11:05,388 - lddecode - ERROR - Error! Something went wrong when decoding or building json!
+2025-12-21 19:11:05,392 - lddecode - ERROR - Error! Something went wrong when decoding or building json!
+2025-12-21 19:11:08,074 - lddecode - DEBUG - VBI EQ serration pulses search failed (using fallback logic)
+2025-12-21 19:11:08,842 - lddecode - DEBUG - level check failed in pulses_levels!
+2025-12-21 19:11:08,842 - lddecode - DEBUG - Level detection failed - sync or blank is None

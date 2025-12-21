@@ -540,6 +540,12 @@ int main(int argc, char* argv[]) {
                 std::cout << "  Skipping first " << samplesSkipped << " samples to align with field boundary\n";
             }
             
+            // Track the input RF file position for each field
+            // inputRFPosition tracks the byte position in the input file where current buffer starts
+            // For the first field, it's: seekOffset + fieldStartOffset (samples = bytes for uint8)
+            size_t inputRFBasePosition = seekOffset;  // Base position from --seek option
+            size_t currentInputSampleOffset = 0;      // Cumulative samples processed
+            
             std::cout << "\nDecoding: [";
             std::cout.flush();
             
@@ -629,6 +635,7 @@ int main(int argc, char* argv[]) {
                 }
                 
                 totalSamplesProcessed += fmResult.video.size();
+                currentInputSampleOffset += fmResult.video.size();
                 
                 // Skip samples to align with field boundary (only on first field)
                 if (needToSkipSamples && videoBuffer.size() >= samplesSkipped) {
@@ -681,7 +688,20 @@ int main(int argc, char* argv[]) {
                                 if (lineStarts.size() >= 2) {
                                     detectedLineLength = static_cast<int>(lineStarts[1] - lineStarts[0]);
                                 }
-                                syncFound = true;
+                                
+                                // Only use sync detection if we found enough lines
+                                // (should find at least 80% of expected lines)
+                                size_t expectedLines = static_cast<size_t>(config.system.fieldLines[fieldCount % 2]);
+                                if (lineStarts.size() >= expectedLines * 0.8) {
+                                    syncFound = true;
+                                } else {
+                                    // Not enough lines - clear and fall back to fixed positions
+                                    if (fieldCount == 0) {
+                                        std::cout << "\n  Sync detection found only " << lineStarts.size() 
+                                                  << " lines (need " << expectedLines << ") - using fallback\n";
+                                    }
+                                    lineStarts.clear();
+                                }
                                 
                                 // Debug: print sync info on first field
                                 if (fieldCount == 0) {
@@ -780,9 +800,17 @@ int main(int argc, char* argv[]) {
                     fieldMeta.seqNo = fieldCount + 1;
                     fieldMeta.isFirstField = (fieldCount % 2 == 0);
                     fieldMeta.lineCount = field.size();
-                    // Output field size: outputLineLen * lineCount * 2 bytes per sample
-                    size_t outputFieldSize = outputLineLen * field.size() * 2;
-                    fieldMeta.fileLoc = fieldCount * outputFieldSize;
+                    
+                    // Calculate input RF file position for this field
+                    // fileLoc = byte position in the input RF file where this field starts
+                    // The buffer contains samples that haven't been used yet
+                    // currentInputSampleOffset is cumulative samples read from input
+                    // videoBuffer.size() is samples remaining in buffer (not yet assigned to fields)
+                    // So field starts at: inputRFBasePosition + (currentInputSampleOffset - videoBuffer.size() - samplesNeeded + samplesConsumed)
+                    // For simplicity, track fieldInputPosition = field start position in input bytes
+                    size_t fieldInputPosition = inputRFBasePosition + fieldStartOffset + (fieldCount * samplesPerField);
+                    fieldMeta.fileLoc = fieldInputPosition;
+                    
                     fieldMeta.diskLoc = static_cast<double>(fieldCount) + 1.4;
                     fieldMeta.syncConf = 100;
                     fieldMeta.fieldPhaseID = 1;

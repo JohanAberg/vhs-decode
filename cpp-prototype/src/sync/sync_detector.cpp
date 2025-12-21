@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <cmath>
 #include <numeric>
+#include <iostream>
 
 namespace vhsdecode {
 namespace sync {
@@ -39,6 +40,19 @@ std::vector<Pulse> SyncDetector::findPulses(const RealArray& video, float syncTh
     bool inPulse = video[0] <= syncThreshold;
     size_t pulseStart = 0;
     
+    // Debug: print first 20 samples to verify data
+    static bool firstCall = true;
+    if (firstCall) {
+        std::cout << "  [SyncDetector] First 20 samples: ";
+        for (size_t i = 0; i < 20 && i < video.size(); ++i) {
+            std::cout << static_cast<int>(video[i]) << " ";
+        }
+        std::cout << "\n";
+        std::cout << "  [SyncDetector] Threshold: " << syncThreshold 
+                  << ", Min pulse: " << minPulseLen << ", Max pulse: " << maxPulseLen << "\n";
+        firstCall = false;
+    }
+    
     for (size_t i = 1; i < video.size(); ++i) {
         if (inPulse) {
             // Currently in a pulse, check if we exit
@@ -46,7 +60,8 @@ std::vector<Pulse> SyncDetector::findPulses(const RealArray& video, float syncTh
                 size_t pulseLen = i - pulseStart;
                 
                 // Only keep pulses within expected length range
-                if (pulseLen >= minPulseLen && pulseLen <= maxPulseLen && pulseStart > 0) {
+                // Allow pulses starting at 0 (first sync of field)
+                if (pulseLen >= minPulseLen && pulseLen <= maxPulseLen) {
                     pulses.emplace_back(pulseStart, pulseLen);
                 }
                 inPulse = false;
@@ -82,6 +97,16 @@ std::vector<LineInfo> SyncDetector::computeLineLocations(
     double minHsyncLen = expectedHsyncLen * 0.5;
     double maxHsyncLen = expectedHsyncLen * 2.0;
     
+    // Debug: print filter parameters once
+    static bool firstCall = true;
+    if (firstCall) {
+        std::cout << "  [LineCompute] Expected line len: " << expectedLineLength 
+                  << ", range: " << minLineLen << "-" << maxLineLen << "\n";
+        std::cout << "  [LineCompute] Expected hsync len: " << expectedHsyncLen 
+                  << ", range: " << minHsyncLen << "-" << maxHsyncLen << "\n";
+        firstCall = false;
+    }
+    
     // Filter pulses to likely horizontal syncs (not vsync or eq pulses)
     std::vector<const Pulse*> hsyncCandidates;
     for (const auto& pulse : pulses) {
@@ -90,18 +115,28 @@ std::vector<LineInfo> SyncDetector::computeLineLocations(
         }
     }
     
+    std::cout << "  [LineCompute] HSYNC candidates: " << hsyncCandidates.size() 
+              << " out of " << pulses.size() << " pulses\n";
+    
     if (hsyncCandidates.size() < 2) {
         return lineLocations;
     }
     
     // Compute line lengths between consecutive hsync pulses
     std::vector<double> lineLengths;
+    int validLineLengths = 0, invalidLineLengths = 0;
     for (size_t i = 1; i < hsyncCandidates.size(); ++i) {
         double len = static_cast<double>(hsyncCandidates[i]->start - hsyncCandidates[i-1]->start);
         if (len >= minLineLen && len <= maxLineLen) {
             lineLengths.push_back(len);
+            validLineLengths++;
+        } else {
+            invalidLineLengths++;
         }
     }
+    
+    std::cout << "  [LineCompute] Valid line lengths: " << validLineLengths 
+              << ", Invalid: " << invalidLineLengths << "\n";
     
     if (lineLengths.empty()) {
         return lineLocations;

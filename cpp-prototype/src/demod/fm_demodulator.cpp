@@ -13,49 +13,33 @@ public:
     
     explicit Impl(const ProcessingConfig& cfg) : config(cfg) {}
     
-    // FM demodulation matching Python's unwrap_hilbert()
-    // Algorithm:
-    // 1. Get phase angles from analytic signal
-    // 2. Compute first difference of angles (ediff1d)
-    // 3. Unwrap the phase differences
-    // 4. Clamp to [0, tau] range for bad data
-    // 5. Scale by (sampleRate / tau) to get frequency in Hz
+    // FM demodulation matching Python's unwrap_hilbert() algorithm exactly
+    // Algorithm from lddecode/utils.py:
+    // 1. tangles = np.angle(hilbert)
+    // 2. dangles = np.ediff1d(tangles, to_begin=0)
+    // 3. dangles = np.unwrap(dangles)  - cumulative unwrap for phase jumps
+    // 4. Clamp to [0, tau] for bad data
+    // 5. return dangles * (freq_hz / tau)
     RealArray fmDemodulate(const ComplexArray& analyticSignal, float sampleRate) {
         const size_t N = analyticSignal.size();
         RealArray dangles(N);
-        RealArray envelope(N);
         
-        // First pass: compute envelope for gating
-        float maxEnv = 0.0f;
-        for (size_t i = 0; i < N; ++i) {
-            envelope[i] = std::abs(analyticSignal[i]);
-            if (envelope[i] > maxEnv) maxEnv = envelope[i];
-        }
-        
-        // Envelope threshold for valid signal (10% of max)
-        float envThreshold = maxEnv * 0.1f;
-        
-        // Expected frequency for blanking (when no signal)
-        // Use approximate video carrier center frequency
-        float blankingFreq = 4.0e6f;  // 4 MHz - approximate video carrier
-        
-        // Step 1: Get phase angles and compute first difference
-        float prevAngle = std::arg(analyticSignal[0]);
+        // Step 1 & 2: Get phase angles and compute first difference (ediff1d)
         dangles[0] = 0.0f;  // to_begin=0 in Python ediff1d
         
         for (size_t i = 1; i < N; ++i) {
-            // Gate: if envelope is too low, skip phase tracking
-            if (envelope[i] < envThreshold || envelope[i-1] < envThreshold) {
-                dangles[i] = blankingFreq * TAU / sampleRate;  // Use blanking frequency
-                prevAngle = std::arg(analyticSignal[i]);  // Reset phase tracking
-                continue;
-            }
-            
+            float prevAngle = std::arg(analyticSignal[i-1]);
             float currAngle = std::arg(analyticSignal[i]);
             dangles[i] = currAngle - prevAngle;
-            prevAngle = currAngle;
-            
-            // Normalize to [-pi, pi] range (unwrap)
+        }
+        
+        // Step 3: np.unwrap() on differences
+        // np.unwrap corrects for 2π discontinuities cumulatively
+        // For each sample, if the jump from previous is > π, subtract 2π
+        // if jump < -π, add 2π
+        // For phase differences that are already per-sample, this is equivalent
+        // to bringing each sample into [-π, π]
+        for (size_t i = 0; i < N; ++i) {
             while (dangles[i] > static_cast<float>(M_PI)) {
                 dangles[i] -= TAU;
             }
@@ -64,7 +48,8 @@ public:
             }
         }
         
-        // Step 3: Clamp to [0, tau] range to handle bad data
+        // Step 4: Clamp to [0, tau] for bad data
+        // "With extremely bad data, the unwrapped angles can jump"
         for (size_t i = 0; i < N; ++i) {
             while (dangles[i] < 0.0f) {
                 dangles[i] += TAU;
@@ -74,8 +59,7 @@ public:
             }
         }
         
-        // Step 4: Scale to frequency in Hz
-        // Formula: freq = dangles * (sampleRate / tau)
+        // Step 5: Scale to frequency in Hz
         float scale = sampleRate / TAU;
         for (size_t i = 0; i < N; ++i) {
             dangles[i] *= scale;
