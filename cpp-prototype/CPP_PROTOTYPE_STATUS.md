@@ -53,7 +53,7 @@ It serves as a foundation for GPU acceleration via OpenCL.
   - 0 IRE → 16384
   - 100 IRE → 54016
 
-### 7. TBC Scaler (`src/tbc/tbc_scaler.cpp`) ← NEW
+### 7. TBC Scaler (`src/tbc/tbc_scaler.cpp`)
 - Resamples from input rate (40 MHz) to output rate (4×fsc = 17.734475 MHz)
 - Input line length: 2560 samples (64µs × 40 MHz)
 - Output line length: 1135 samples (64µs × 17.734475 MHz)
@@ -64,15 +64,24 @@ It serves as a foundation for GPU acceleration via OpenCL.
 - Writes _chroma.tbc chroma files
 - Writes .tbc.json metadata with proper PAL parameters
 
-### 9. Sync Detection (`src/sync/sync_detector.cpp`)
+### 9. Horizontal Sync Detection (`src/sync/sync_detector.cpp`)
 - Finds horizontal sync pulses in demodulated video
 - Computes line start positions from pulse locations
 - Aligns video lines to sync pulses for proper TBC output
-- **Results on test file:**
-  - 312 pulses found per field
-  - 211 lines detected (expected: 312)
-  - Detected line length: 2558 samples (expected: 2560)
-  - Sync positions now consistent at pos 1-3
+
+### 10. Vertical Sync Detection (`src/sync/vsync_detector.cpp`) ← NEW
+- Detects field boundaries by analyzing the vertical blanking interval
+- State machine matching Python's `run_vblank_state_machine()`:
+  - HSYNC_SEARCH → EQPL1 → VSYNC → EQPL2 → DONE
+- PAL pulse timing thresholds (at 40 MHz):
+  - HSYNC: 112-300 samples (4.7µs nominal)
+  - EQ: 56-150 samples (2.35µs nominal)
+  - VSYNC: 655-1747 samples (27.3µs nominal)
+- **Results on test file (out1.u8):**
+  - Detected 1718 pulses: HSYNC=1251, EQ=42, VSYNC=21
+  - Found 4 field boundaries
+  - First field at sample 191190 (line ~74)
+  - Field length: 798735 samples (~312 lines) ✓
 
 ## Comparison with Python Decoder
 
@@ -107,9 +116,9 @@ When comparing C++ output with Python vhs-decode output on the same input file:
 - ✓ Output at correct TBC format (1135 × 312 samples)
 - ✓ Bicubic interpolation for resampling
 - ✓ Horizontal sync detection
+- ✓ Vertical sync detection (field boundaries)
 
 ### What's Missing for Full Match
-- ✗ Vertical sync detection (field boundaries)
 - ✗ Sub-sample line positioning (linelocs interpolation)
 - ✗ High-frequency boost
 - ✗ Spike replacement
@@ -123,11 +132,17 @@ Raw input stats (uint8): min=31 max=223 avg=126.1 range=192
 Envelope stats: Min=0.27, Max=0.73, Avg=0.50
 Video frequency: Min=0, Max=5.6MHz, Avg=4.1MHz (7.0 IRE)
 
-Sync detection (first field):
-  Pulses found: 312
-  Lines detected: 211
-  Detected line length: 2558 samples
-  First 3 line starts: 1368, 3926, 6483 (spacing ~2558 ✓)
+Vertical sync detection:
+  Detected 1718 pulses: HSYNC=1251, EQ=42, VSYNC=21
+  Found 4 field boundaries in ~3 fields of data
+  First field at sample 191190 (line ~74)
+  Field length: 798735 samples (~312 lines) ✓
+
+Horizontal sync detection (first field):
+  Pulses found: 313
+  Lines detected: 223
+  Detected line length: 2468 samples (expected ~2560)
+  First 3 line starts: 148, 2616, 5175
 ```
 
 ### Line Alignment Verification
@@ -140,32 +155,27 @@ Lines are now aligned to horizontal sync!
 
 ## Missing Components (Not Yet Implemented)
 
-### 1. Vertical Sync Detection (HIGH PRIORITY)
-- Identify field boundaries (currently starts at arbitrary position)
-- Detect first/second field for proper interlacing
-- Handle non-standard sync patterns
-- **Impact**: This is the main cause of low correlation with Python
-
-### 2. Sub-Sample Line Positioning
+### 1. Sub-Sample Line Positioning (HIGH PRIORITY)
 - Python uses `linelocs` with interpolation for precise positioning
 - C++ uses fixed-length lines (2560 samples)
 - Need to implement per-line position tracking and interpolation
+- **Impact**: This affects per-line horizontal alignment
 
-### 3. Time-Base Correction Refinement
+### 2. Time-Base Correction Refinement
 - Basic resampling implemented (2560 → 1135)
 - Missing: wow/flutter compensation
 - Missing: per-line variable timing adjustment
 
-### 4. Signal Enhancement
+### 3. Signal Enhancement
 - High-frequency boost in weak signal areas (Python's `high_boost`)
 - Spike detection and replacement (Python's `diff_demod`)
 - Better envelope-based processing
 
-### 5. Dropout Detection/Compensation
+### 4. Dropout Detection/Compensation
 - Use envelope signal to detect dropouts
 - Replace dropout samples with interpolated data
 
-### 6. Color Processing
+### 5. Color Processing
 - Color burst detection and phase measurement
 - Chroma separation (currently just copies luma)
 - PAL/NTSC color decoding

@@ -10,6 +10,7 @@ set(SOURCES
     rf/rf_processor.cpp
     demod/fm_demodulator.cpp
     sync/sync_detector.cpp
+    sync/vsync_detector.cpp
     tbc/tbc_scaler.cpp
     video/dropout_corrector.cpp
     video/tbc_corrector.cpp

@@ -14,6 +14,7 @@
 #include "vhsdecode/hilbert.hpp"
 #include "vhsdecode/rf_processor.hpp"
 #include "vhsdecode/sync_detector.hpp"
+#include "vhsdecode/vsync_detector.hpp"
 #include "vhsdecode/tbc_scaler.hpp"
 #include "formats/format_base.hpp"
 #include "formats/vhs_format.hpp"
@@ -449,6 +450,24 @@ int main(int argc, char* argv[]) {
             syncConfig.linesPerField = config.system.fieldLines[0];
             sync::SyncDetector syncDetector(syncConfig);
             
+            // Setup vertical sync detector
+            sync::VSyncConfig vsyncConfig;
+            vsyncConfig.sampleRateMHz = config.inputFreqMHz;
+            vsyncConfig.linePeriodUS = linePeriodUS;
+            vsyncConfig.hsyncPulseUS = 4.7;      // Standard HSYNC
+            vsyncConfig.eqPulseUS = 2.35;        // Equalizing pulse (~half HSYNC)
+            vsyncConfig.vsyncPulseUS = (config.system.system == TVSystem::PAL) ? 27.3 : 27.1;
+            vsyncConfig.numEqPulses = 5;         // PAL uses 5 EQ pulses per section
+            vsyncConfig.fieldLines = config.system.fieldLines[0];
+            vsyncConfig.syncThreshold = 0.25f;   // Lower threshold to catch sync tips
+            sync::VSyncDetector vsyncDetector(vsyncConfig);
+            
+            std::cout << "\nVertical sync detector initialized:\n";
+            std::cout << "  HSYNC pulse: " << vsyncConfig.hsyncPulseUS << " µs\n";
+            std::cout << "  EQ pulse: " << vsyncConfig.eqPulseUS << " µs\n";
+            std::cout << "  VSYNC pulse: " << vsyncConfig.vsyncPulseUS << " µs\n";
+            std::cout << "  EQ pulses per section: " << vsyncConfig.numEqPulses << "\n";
+            
             // Sync threshold in digital units
             // With new scaling: sync tip (-40 IRE) = 256, black (0 IRE) = 15616
             // Threshold should be between sync and blanking, around 8000
@@ -461,8 +480,71 @@ int main(int argc, char* argv[]) {
             std::cout << "  Samples per line: " << expectedLineLen << "\n";
             std::cout << "  Sync threshold: " << syncThresholdDigital << " (digital units)\n";
             
-            std::cout << "Decoding: [";
+            // Find field boundaries using vertical sync detection
+            // Process initial blocks to get video for vsync detection
+            std::cout << "\nFinding field boundaries...\n";
+            std::vector<sync::FieldBoundary> fieldBoundaries;
+            std::vector<float> initialVideo;
+            size_t initialBlocks = std::min(static_cast<size_t>(100), totalBlocks - startBlock);  // ~3 fields worth
+            
+            // IRE conversion parameters (same as main decode loop)
+            float ire0Hz = 4100000.0f;       // 0 IRE (black level) in Hz (4.1 MHz)
+            float hzPerIre = 7000.0f;        // Hz per IRE
+            float vsyncIre = -42.857f;       // Sync tip in IRE (PAL standard)
+            float outputZero = 256.0f;       // Digital value at sync tip
+            float outScale = 53760.0f / 142.857f;  // = 376.32 digital per IRE
+            
+            for (size_t blockNum = startBlock; blockNum < startBlock + initialBlocks; ++blockNum) {
+                auto rfBlock = reader.readBlock(config.blockSize, blockNum);
+                if (rfBlock.data.empty()) break;
+                
+                auto rfResult = rfProcessor.processBlock(rfBlock.data);
+                auto fmResult = fmDemod.demodulate(rfResult.analyticSignal);
+                
+                // Convert to digital values for vsync detection
+                for (const auto& v : fmResult.video) {
+                    float ire = (v - ire0Hz) / hzPerIre;
+                    float digital = (ire - vsyncIre) * outScale + outputZero;
+                    digital = std::max(0.0f, std::min(65535.0f, digital));
+                    initialVideo.push_back(digital);
+                }
+            }
+            
+            // Detect field boundaries in digitized video
+            fieldBoundaries = vsyncDetector.detect(initialVideo);
+            
+            size_t fieldStartOffset = 0;
+            if (!fieldBoundaries.empty()) {
+                fieldStartOffset = fieldBoundaries[0].position;
+                std::cout << "✓ Found " << fieldBoundaries.size() << " field boundaries\n";
+                std::cout << "  First field starts at sample " << fieldStartOffset 
+                          << " (line ~" << (fieldStartOffset / inputLineLen) << ")\n";
+                std::cout << "  Field type: " << (fieldBoundaries[0].isFirstField ? "Odd (1)" : "Even (2)") << "\n";
+                
+                if (fieldBoundaries.size() >= 2) {
+                    size_t fieldLen = fieldBoundaries[1].position - fieldBoundaries[0].position;
+                    std::cout << "  Field length: " << fieldLen << " samples (~" 
+                              << (fieldLen / inputLineLen) << " lines)\n";
+                }
+            } else {
+                std::cout << "⚠ No field boundaries detected - using start of data\n";
+            }
+            
+            // Clear initial buffers and start fresh from field boundary
+            initialVideo.clear();
+            
+            // Pre-skip samples to align with field boundary
+            size_t samplesSkipped = 0;  // Track how many samples to skip in first field
+            if (fieldStartOffset > 0) {
+                samplesSkipped = fieldStartOffset;
+                std::cout << "  Skipping first " << samplesSkipped << " samples to align with field boundary\n";
+            }
+            
+            std::cout << "\nDecoding: [";
             std::cout.flush();
+            
+            // Track if we need to skip samples in the accumulated buffer
+            bool needToSkipSamples = (fieldStartOffset > 0);
             
             size_t processedBlocks = 0;
             for (size_t blockNum = startBlock; blockNum < totalBlocks; ++blockNum) {
@@ -547,6 +629,22 @@ int main(int argc, char* argv[]) {
                 }
                 
                 totalSamplesProcessed += fmResult.video.size();
+                
+                // Skip samples to align with field boundary (only on first field)
+                if (needToSkipSamples && videoBuffer.size() >= samplesSkipped) {
+                    // Remove samples before the detected field start
+                    size_t toSkip = std::min(samplesSkipped, videoBuffer.size());
+                    videoBuffer.erase(videoBuffer.begin(), videoBuffer.begin() + toSkip);
+                    
+                    toSkip = std::min(samplesSkipped, chromaBuffer.size());
+                    chromaBuffer.erase(chromaBuffer.begin(), chromaBuffer.begin() + toSkip);
+                    
+                    toSkip = std::min(samplesSkipped, videoFloatBuffer.size());
+                    videoFloatBuffer.erase(videoFloatBuffer.begin(), videoFloatBuffer.begin() + toSkip);
+                    
+                    needToSkipSamples = false;  // Only skip once
+                    std::cout << " (skipped " << samplesSkipped << " samples to field boundary) ";
+                }
                 
                 // Check if we have enough samples for a field
                 while (videoBuffer.size() >= samplesPerField && chromaBuffer.size() >= samplesPerField && 
