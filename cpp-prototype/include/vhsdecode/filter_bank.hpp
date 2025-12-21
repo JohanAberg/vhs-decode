@@ -149,6 +149,22 @@ public:
      */
     std::vector<std::string> getFilterNames() const;
 
+    /**
+     * @brief Create a VHS de-emphasis filter
+     * 
+     * Creates a standard VHS de-emphasis filter (inverted high-shelf)
+     * matching the Python implementation.
+     * 
+     * @param name Filter name
+     * @param gainDb Gain in dB (e.g. 13.9794 for PAL)
+     * @param midFreqHz Mid-point frequency in Hz (e.g. 273755.82 for PAL)
+     * @param qFactor Q factor (e.g. 0.462 for PAL)
+     */
+    void createDeemphasisFilter(const std::string& name, 
+                                double gainDb, 
+                                double midFreqHz, 
+                                double qFactor);
+
 private:
     double sampleRateMHz_;
     size_t blockSize_;

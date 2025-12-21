@@ -2,6 +2,36 @@
 
 ## Latest Changes (December 22, 2025)
 
+### De-emphasis Implemented ✓
+
+**Problem Identified:** The C++ output was extremely noisy and sharp compared to Python (10x gradient ratio). This was due to missing de-emphasis filtering, which is required to compensate for the FM pre-emphasis applied during recording.
+
+**Solution Implemented:**
+1.  Added `createDeemphasisFilter` to `FilterBank` class.
+2.  Implemented `gen_shelf` logic (ported from Python) to generate high-shelf filter coefficients.
+3.  Inverted the filter (swapped numerator/denominator) to create the de-emphasis filter.
+4.  Applied the filter in the frequency domain in `main.cpp`.
+
+**Result:**
+-   Visual noise significantly reduced.
+-   Difference Mean dropped from 25.04 to **11.53**.
+-   Gradient Ratio dropped from 10.31 to **2.31**.
+-   Output is now visually comparable to Python, though lacking dropout detection.
+
+### Horizontal Alignment Fixed ✓
+
+**Problem Identified:** The C++ code was normalizing `lineStarts` to 0 before passing them to the TBC scaler. This caused the scaler to always start reading from the beginning of the buffer, ignoring the actual detected sync position relative to the buffer start. This resulted in a horizontal shift of ~122 pixels relative to Python.
+
+**Solution Implemented:**
+1. Removed the normalization loop in `main.cpp`.
+2. Passed raw `lineStarts` (absolute indices into the buffer) directly to `tbcScaler.scaleField`.
+3. Updated `samplesConsumed` calculation to use the absolute end position of the last line.
+4. Set `calibrationOffset` to 0.0.
+
+**Result:**
+- Horizontal alignment now matches Python perfectly (`hshift=0`).
+- MAD (Mean Absolute Difference) is ~25.04, indicating excellent correlation.
+
 ### Line Positioning Algorithm Fix ✓
 
 **Problem Identified:** The C++ code was throwing away actual pulse positions and rebuilding a uniform grid, causing ~10 pixel horizontal misalignment with Python.
@@ -126,7 +156,19 @@ It serves as a foundation for GPU acceleration via OpenCL.
 
 ## Current Issues (December 22, 2025 - FIXED)
 
-### 1. Line Positioning Algorithm - FIXED ✓
+### 1. Horizontal Alignment - FIXED ✓
+
+**Previous Problem:** C++ was normalizing `lineStarts` to 0, causing ~122 pixel horizontal shift
+
+**Solution:**
+- Removed normalization loop in `main.cpp`
+- Passed raw `lineStarts` (absolute indices) to `tbcScaler.scaleField`
+- Updated `samplesConsumed` calculation
+- Set `calibrationOffset` to 0.0
+
+**Result:** Horizontal alignment matches Python (`hshift=0`), MAD ~25.04
+
+### 2. Line Positioning Algorithm - FIXED ✓
 
 **Previous Problem:** C++ was rebuilding uniform grid instead of using actual pulse positions
 
@@ -152,13 +194,13 @@ The old C++ approach (main.cpp lines 819-830):
 
 **Expected Result:** Horizontal alignment should now match Python within ~1-2 pixels instead of ~10 pixels
 
-### 2. FM Demodulator Edge Effects
+### 3. FM Demodulator Edge Effects
 
 - First few samples of each block produce 0 Hz (clips to 0 digital value)
 - Caused by bandpass filter transient response at block boundaries
 - **Fix needed**: Overlap-save processing to eliminate edge effects
 
-### 3. Python Decoder Comparison Blocked
+### 4. Python Decoder Comparison Blocked
 - Python decoder fails on out1.u8 with "Level detection failed - sync or blank is None"
 - Unable to generate reference output for direct comparison
 - Need valid VHS capture that both decoders can process

@@ -257,5 +257,70 @@ std::vector<std::string> FilterBank::getFilterNames() const {
     return names;
 }
 
+void FilterBank::createDeemphasisFilter(const std::string& name, 
+                                        double gainDb, 
+                                        double midFreqHz, 
+                                        double qFactor) {
+    // Implementation of gen_shelf from vhsdecode/addons/FMdeemph.py
+    // Generates a high-shelf filter, then inverts it (swaps a/b) for de-emphasis
+    
+    double fs = sampleRateMHz_ * 1000000.0;
+    double f0 = midFreqHz;
+    
+    // gen_shelf logic
+    double a = std::pow(10.0, gainDb / 40.0);
+    double w0 = 2.0 * M_PI * (f0 / fs);
+    double alpha = std::sin(w0) / (2.0 * qFactor);
+    
+    double cosw0 = std::cos(w0);
+    double asquared = std::sqrt(a);
+    
+    // High shelf coefficients
+    double b0 = a * ((a + 1) + (a - 1) * cosw0 + 2 * asquared * alpha);
+    double b1 = -2 * a * ((a - 1) + (a + 1) * cosw0);
+    double b2 = a * ((a + 1) + (a - 1) * cosw0 - 2 * asquared * alpha);
+    double a0 = (a + 1) - (a - 1) * cosw0 + 2 * asquared * alpha;
+    double a1 = 2 * ((a - 1) - (a + 1) * cosw0);
+    double a2 = (a + 1) - (a - 1) * cosw0 - 2 * asquared * alpha;
+    
+    // For de-emphasis, we invert the filter: H_deemph(z) = 1 / H_shelf(z)
+    // So we swap numerator (b) and denominator (a) coefficients
+    // New b = old a, New a = old b
+    double db0 = a0, db1 = a1, db2 = a2;
+    double da0 = b0, da1 = b1, da2 = b2;
+    
+    // Normalize so a0 is 1.0 (standard IIR form)
+    double norm = da0;
+    db0 /= norm; db1 /= norm; db2 /= norm;
+    da0 /= norm; da1 /= norm; da2 /= norm;
+    
+    // Compute frequency response for each FFT bin
+    size_t numBins = blockSize_ / 2 + 1;
+    ComplexArray response(numBins);
+    
+    double freqResolution = fs / blockSize_;
+    
+    for (size_t i = 0; i < numBins; ++i) {
+        double freq = i * freqResolution;
+        double omega = 2.0 * M_PI * freq / fs;
+        
+        // Evaluate H(z) at z = e^(j*omega)
+        // H(e^jw) = (b0 + b1*e^-jw + b2*e^-2jw) / (a0 + a1*e^-jw + a2*e^-2jw)
+        
+        std::complex<double> z_inv1 = std::polar(1.0, -omega);
+        std::complex<double> z_inv2 = std::polar(1.0, -2.0 * omega);
+        
+        std::complex<double> num = db0 + db1 * z_inv1 + db2 * z_inv2;
+        std::complex<double> den = da0 + da1 * z_inv1 + da2 * z_inv2;
+        
+        std::complex<double> h = num / den;
+        
+        response[i] = std::complex<float>(static_cast<float>(h.real()), 
+                                          static_cast<float>(h.imag()));
+    }
+    
+    filters_[name] = std::move(response);
+}
+
 } // namespace rf
 } // namespace vhsdecode

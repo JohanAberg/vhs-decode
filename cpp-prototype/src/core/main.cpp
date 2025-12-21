@@ -488,12 +488,22 @@ int main(int argc, char* argv[]) {
             videoFilterBank.createButterworthLPF("video_lpf", videoLpfCutoffMHz, videoLpfOrder);
             const auto& videoLpfFilter = videoFilterBank.getFilter("video_lpf");
             
+            // Video de-emphasis filter
+            // VHS PAL parameters from vhsdecode/format_defs/vhs.py
+            double deemphGain = 13.9794;
+            double deemphMid = 273755.82;
+            double deemphQ = 0.462088186;
+            videoFilterBank.createDeemphasisFilter("video_deemph", deemphGain, deemphMid, deemphQ);
+            const auto& videoDeemphFilter = videoFilterBank.getFilter("video_deemph");
+            
             // Create FFT engine for video LPF application
             rf::FFTEngine videoFftEngine(config.blockSize, false);
             
-            std::cout << "\nVideo low-pass filter:\n";
-            std::cout << "  Type: " << (isPAL ? "PAL (3.4 MHz)" : "NTSC (6.6 MHz)") << "\n";
-            std::cout << "  Order: " << videoLpfOrder << " (Butterworth, frequency domain)\n";
+            std::cout << "\nVideo filters:\n";
+            std::cout << "  LPF: " << (isPAL ? "PAL (3.4 MHz)" : "NTSC (6.6 MHz)") 
+                      << ", Order " << videoLpfOrder << "\n";
+            std::cout << "  De-emphasis: Gain=" << deemphGain << "dB, Mid=" << deemphMid 
+                      << "Hz, Q=" << deemphQ << "\n";
             
             // Sync threshold in digital units
             // With new scaling: sync tip (-40 IRE) = 256, black (0 IRE) = 15616
@@ -616,11 +626,12 @@ int main(int argc, char* argv[]) {
                     std::cout << "] MHz\n";
                 }
                 
-                // Apply video low-pass filter in frequency domain (matches Python's filter_video_lpf)
-                // FFT -> multiply by filter -> IFFT
+                // Apply video filters (De-emphasis + LPF) in frequency domain
+                // FFT -> multiply by filters -> IFFT
                 {
                     auto videoFft = videoFftEngine.forwardFFT(fmResult.video);
-                    videoFftEngine.applyFilter(videoFft, videoLpfFilter);
+                    videoFftEngine.applyFilter(videoFft, videoDeemphFilter); // Apply de-emphasis first
+                    videoFftEngine.applyFilter(videoFft, videoLpfFilter);    // Then LPF
                     fmResult.video = videoFftEngine.inverseFFT(videoFft);
                 }
                 
@@ -803,12 +814,18 @@ int main(int argc, char* argv[]) {
                             lineStarts.clear();
                             lineStarts.resize(expectedLines);
                             int detectedCount = 0;
+                            
+                            // Calibration offset to match Python baseline
+                            // Set to 0.0 as we now use raw lineStarts without normalization.
+                            // This matches Python's behavior where line0loc is used directly.
+                            double calibrationOffset = 0.0;
+                            
                             for (size_t i = 0; i < expectedLines; ++i) {
                                 if (linelocsMap.find(static_cast<int>(i)) != linelocsMap.end()) {
-                                    lineStarts[i] = linelocsMap[static_cast<int>(i)];
+                                    lineStarts[i] = linelocsMap[static_cast<int>(i)] - calibrationOffset;
                                     detectedCount++;
                                 } else {
-                                    lineStarts[i] = line0loc + (i * meanLineLength);  // fallback
+                                    lineStarts[i] = line0loc + (i * meanLineLength) - calibrationOffset;  // fallback
                                 }
                             }
                             
@@ -847,20 +864,13 @@ int main(int argc, char* argv[]) {
                     size_t numLines = std::min(lineStarts.size(), 
                                                static_cast<size_t>(config.system.fieldLines[fieldCount % 2]));
 
-                    // Zero-base line starts for scaling but keep original offset for consumption/fileLoc
-                    std::vector<double> lineStartsForScaling;
-                    lineStartsForScaling.reserve(lineStarts.size());
-                    double startOffset = lineStarts.empty() ? 0.0 : lineStarts.front();
-                    for (double v : lineStarts) {
-                        lineStartsForScaling.push_back(v - startOffset);
-                    }
-
                     // Create RealArray from float buffer for scaling
                     RealArray videoForScaling(videoFloatBuffer.begin(), 
                                               videoFloatBuffer.begin() + std::min(videoFloatBuffer.size(), samplesNeeded + inputLineLen));
                     
                     // Scale the field using TBC scaler
-                    auto scaledLines = tbcScaler.scaleField(videoForScaling, lineStartsForScaling, numLines);
+                    // Pass lineStarts directly (do not normalize to 0) to preserve horizontal alignment
+                    auto scaledLines = tbcScaler.scaleField(videoForScaling, lineStarts, numLines);
                     
                     // Convert scaled lines to VideoField (uint16_t)
                     VideoField field;
@@ -901,8 +911,9 @@ int main(int argc, char* argv[]) {
                     
                     // Determine samples to remove based on what we actually consumed
                     if (!lineStarts.empty()) {
-                        double span = (lineStarts.back() + static_cast<double>(detectedLineLength)) - startOffset;
-                        samplesConsumed = static_cast<size_t>(std::ceil(span));
+                        // Consume up to the end of the last line
+                        double endPos = lineStarts.back() + static_cast<double>(detectedLineLength);
+                        samplesConsumed = static_cast<size_t>(std::ceil(endPos));
                     } else {
                         samplesConsumed = samplesNeeded;
                     }
