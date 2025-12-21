@@ -415,6 +415,20 @@ Following these guidelines ensures both GPU acceleration and general development
 - `docs/DECODER_USAGE.md` - User-facing decoder documentation
 - `docs/GPU_USAGE.md` - GPU-specific usage guide
 
+## C++ Prototype Sync Alignment (Dec 22, 2025)
+- Goal: match Python TBC output (PAL) for `out1.u8` around `--seek 983040`.
+- Current behavior: C++ fileLoc now matches Python at 983040 when seek is provided. Sync detection finds 312 lines, detected line length ~2572 samples. Best alignment vs Python requires ~+4 line vertical shift and ~-10 pixel horizontal shift; MAD ~34 (8-bit) after normalization.
+- Recent changes:
+  - Disable pre-skip to first vsync when user supplies `--seek`; metadata uses seek directly.
+  - Lineloc smoothing via regression slope with ±0.5% clamp; line grid re-anchored to keep first detected start near 0.
+- Remaining issues:
+  - Residual spatial offset (vert +4 lines, horiz -10 px) and low correlation; need to tighten line-start anchoring toward earliest pulse or regression intercept.
+  - Contrast still differs (py ≈ 0.013*cpp + ~76 on 8-bit); revisit IRE→digital scaling if spatial alignment improves.
+- Repro commands:
+  - Python baseline: `python decode.py vhs --system PAL --length 1 --seek 983040 out1.u8 /tmp/python_compare`
+  - C++ test: `./build/src/vhs-decode --system PAL --length 1 --seek 983040 out1.u8 /tmp/cpp_compare_seek`
+  - Compare PNGs: `/tmp/python_compare_field1.png` vs `/tmp/cpp_compare_seek.tbc` → normalized PNG.
+
 ## C++ Prototype (Updated Dec 21, 2025)
 
 The `cpp-prototype/` directory contains a C++ implementation of the VHS RF decoder,
