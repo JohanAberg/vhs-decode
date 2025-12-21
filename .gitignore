@@ -55,6 +55,8 @@ __pycache__
 *.tbc.json
 testdata
 testout
+*.u8
+*.log
 
 # Profiling results
 Benchfile*
