@@ -751,107 +751,82 @@ int main(int argc, char* argv[]) {
                         auto pulses = syncDetector.findPulses(videoForSync, syncThresholdDigital);
                         
                         if (!pulses.empty()) {
-                            // Compute line locations from pulses
-                            auto lineInfos = syncDetector.computeLineLocations(
-                                pulses, expectedLineLenCurrent, videoForSync, syncThresholdDigital);
-                            
-                            // Convert to simple line start positions (keep fractional positions)
-                            for (const auto& info : lineInfos) {
-                                if (info.valid) {
-                                    lineStarts.push_back(info.startSample);
-                                }
-                            }
-                            
                             size_t expectedLines = static_cast<size_t>(config.system.fieldLines[fieldCount % 2]);
-                            if (!lineStarts.empty()) {
-                                double firstDetectedStart = lineStarts.front();
-                                std::vector<double> diffs;
-                                diffs.reserve(lineStarts.size() - 1);
-                                for (size_t i = 1; i < lineStarts.size(); ++i) {
-                                    double d = lineStarts[i] - lineStarts[i-1];
-                                    if (d > 0) diffs.push_back(d);
-                                }
-
-                                double minLen = expectedLineLenCurrent * 0.995;  // tighter clamp ±0.5%
-                                double maxLen = expectedLineLenCurrent * 1.005;
-                                double lineLen = expectedLineLenCurrent;
-
-                                // Linear regression smoothing of line starts (Python-style lineloc smoothing)
-                                if (lineStarts.size() >= 3) {
-                                    double sumX = 0.0, sumY = 0.0, sumXY = 0.0, sumX2 = 0.0;
-                                    for (size_t i = 0; i < lineStarts.size(); ++i) {
-                                        double x = static_cast<double>(i);
-                                        double y = lineStarts[i];
-                                        sumX += x;
-                                        sumY += y;
-                                        sumXY += x * y;
-                                        sumX2 += x * x;
-                                    }
-                                    double n = static_cast<double>(lineStarts.size());
-                                    double denom = (n * sumX2 - sumX * sumX);
-                                    if (denom != 0.0) {
-                                        double slope = (n * sumXY - sumX * sumY) / denom;
-                                        if (slope > 0.0) {
-                                            slope = std::clamp(slope, minLen, maxLen);
-                                            lineLen = slope;
-                                        }
+                            
+                            // Use Python-style line positioning:
+                            // 1. Compute mean line length from consecutive pulses
+                            // 2. Determine line0loc (start of field)
+                            // 3. Assign pulses to line numbers and keep actual positions
+                            // 4. Fill gaps by interpolation
+                            
+                            // Compute mean line length from valid pulse intervals
+                            double meanLineLength = expectedLineLenCurrent;
+                            {
+                                std::vector<double> intervals;
+                                for (size_t i = 1; i < pulses.size() && i < 50; ++i) {
+                                    double interval = static_cast<double>(pulses[i].start - pulses[i-1].start);
+                                    if (interval > expectedLineLenCurrent * 0.9 && 
+                                        interval < expectedLineLenCurrent * 1.1) {
+                                        intervals.push_back(interval);
                                     }
                                 }
-
-                                // Fallback to median if regression failed or produced nonpositive slope
-                                if ((lineLen <= 0.0) && !diffs.empty()) {
-                                    auto sorted = diffs;
-                                    std::sort(sorted.begin(), sorted.end());
-                                    double median = sorted[sorted.size() / 2];
-                                    if (sorted.size() % 2 == 0 && sorted.size() >= 2) {
-                                        median = 0.5 * (sorted[sorted.size()/2 - 1] + sorted[sorted.size()/2]);
-                                    }
-                                    lineLen = median;
+                                if (!intervals.empty()) {
+                                    std::sort(intervals.begin(), intervals.end());
+                                    meanLineLength = intervals[intervals.size() / 2];  // median
                                 }
-
-                                if (lineLen <= 0.0) {
-                                    lineLen = expectedLineLenCurrent;
-                                }
-
-                                lineLen = std::clamp(lineLen, minLen, maxLen);
-                                detectedLineLength = static_cast<int>(lineLen);
-
-                                // Re-anchor grid so the first detected start lands near 0 on the line grid
-                                double firstStart = firstDetectedStart;
-                                if (lineLen > 0.0) {
-                                    double k = std::round(firstStart / lineLen);
-                                    firstStart -= k * lineLen;
-                                }
-                                std::vector<double> rebuilt;
-                                rebuilt.reserve(expectedLines);
-                                for (size_t i = 0; i < expectedLines; ++i) {
-                                    rebuilt.push_back(firstStart + i * lineLen);
-                                }
-                                lineStarts.swap(rebuilt);
-
-                                expectedLineLen = static_cast<float>(lineLen);  // carry forward for next fields
-                                syncFound = true;
                             }
-
-                            if (!syncFound) {
-                                // Not enough lines - clear and fall back to fixed positions
-                                if (fieldCount == 0) {
-                                    std::cout << "\n  Sync detection found only " << lineStarts.size() 
-                                              << " lines (need " << expectedLines << ") - using fallback\n";
+                            
+                            // Determine line0loc (field start position)
+                            // For now, assume first valid pulse is near line 0
+                            // (In full implementation, this would use vsync detection like Python)
+                            double line0loc = 0.0;
+                            if (!pulses.empty()) {
+                                // Use first pulse as reference, compute backwards to line 0
+                                double firstPulsePos = static_cast<double>(pulses[0].start);
+                                double fractionalLine = firstPulsePos / meanLineLength;
+                                int estimatedLineNum = static_cast<int>(std::round(fractionalLine));
+                                line0loc = firstPulsePos - (estimatedLineNum * meanLineLength);
+                                
+                                // Clamp to reasonable range (line 0 should be near start of field)
+                                if (line0loc < -meanLineLength || line0loc > meanLineLength * 5) {
+                                    line0loc = 0.0;  // Fallback to field start
                                 }
-                                lineStarts.clear();
                             }
-
+                            
+                            // Use new Python-style method to compute line positions
+                            auto linelocsMap = syncDetector.computeLineLocsDict(
+                                pulses, line0loc, meanLineLength, 
+                                static_cast<int>(expectedLines),
+                                videoForSync, syncThresholdDigital);
+                            
+                            // Convert map to vector for processing
+                            lineStarts.clear();
+                            lineStarts.resize(expectedLines);
+                            int detectedCount = 0;
+                            for (size_t i = 0; i < expectedLines; ++i) {
+                                if (linelocsMap.find(static_cast<int>(i)) != linelocsMap.end()) {
+                                    lineStarts[i] = linelocsMap[static_cast<int>(i)];
+                                    detectedCount++;
+                                } else {
+                                    lineStarts[i] = line0loc + (i * meanLineLength);  // fallback
+                                }
+                            }
+                            
+                            detectedLineLength = static_cast<int>(meanLineLength);
+                            expectedLineLen = static_cast<float>(meanLineLength);  // carry forward
+                            syncFound = (detectedCount >= static_cast<int>(expectedLines) * 0.5);  // Need 50%+ detected
+                            
                             // Debug: print sync info on first field
                             if (fieldCount == 0) {
-                                std::cout << "\n  Sync detection results (first field):\n";
+                                std::cout << "\n  Sync detection results (first field, Python-style):\n";
                                 std::cout << "    Pulses found: " << pulses.size() << "\n";
-                                std::cout << "    Lines detected: " << lineStarts.size() << "\n";
-                                std::cout << "    Detected line length: " << detectedLineLength << " samples\n";
+                                std::cout << "    Lines detected with actual sync: " << detectedCount << "/" << expectedLines << "\n";
+                                std::cout << "    Mean line length: " << meanLineLength << " samples\n";
+                                std::cout << "    Computed line0loc: " << line0loc << "\n";
                                 if (lineStarts.size() >= 3) {
                                     std::cout << "    First 3 line starts: ";
-                                    for (size_t i = 0; i < 3; ++i) {
-                                        std::cout << lineStarts[i] << " ";
+                                    for (size_t i = 0; i < 3 && i < lineStarts.size(); ++i) {
+                                        std::cout << std::fixed << std::setprecision(1) << lineStarts[i] << " ";
                                     }
                                     std::cout << "\n";
                                 }

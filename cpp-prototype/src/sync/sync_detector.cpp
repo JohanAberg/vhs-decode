@@ -276,5 +276,142 @@ std::vector<RealArray> SyncDetector::extractAlignedLines(
     return alignedLines;
 }
 
+std::map<int, double> SyncDetector::computeLineLocsDict(
+    const std::vector<Pulse>& pulses,
+    double line0loc,
+    double meanLineLength,
+    int numLines,
+    const RealArray& video,
+    float syncThreshold)
+{
+    std::map<int, double> linelocsDict;
+    std::map<int, double> linelocsDist;  // Track distance to line center
+    
+    if (pulses.empty() || meanLineLength <= 0) {
+        return linelocsDict;
+    }
+    
+    // Filter for hsync pulses
+    double expectedHsyncLen = config_.hsyncSamples();
+    double minHsyncLen = expectedHsyncLen * 0.5;
+    double maxHsyncLen = expectedHsyncLen * 2.0;
+    
+    // Tolerance for accepting a pulse as belonging to a line number
+    double hsyncTolerance = 0.6;  // Match Python's default hsync_tolerance
+    
+    // Process each pulse and assign to line number
+    for (const auto& pulse : pulses) {
+        // Only consider hsync-length pulses
+        if (pulse.length < minHsyncLen || pulse.length > maxHsyncLen) {
+            continue;
+        }
+        
+        // Refine pulse position using zero-crossing
+        size_t searchBack = static_cast<size_t>(std::max(1.0, config_.sampleRateMHz));
+        size_t startPos = (pulse.start > searchBack) ? pulse.start - searchBack : 0;
+        size_t searchRange = static_cast<size_t>(config_.hsyncSamples() * 2.0);
+        double refinedStart = findSyncEdge(video, startPos, syncThreshold, searchRange);
+        if (refinedStart < 0) {
+            refinedStart = static_cast<double>(pulse.start);
+        }
+        
+        // Compute fractional line number: (pulse_position - line0) / meanLineLength
+        double lineloc = (refinedStart - line0loc) / meanLineLength;
+        int rlineloc = static_cast<int>(std::round(lineloc));
+        double linelocDistance = std::abs(lineloc - static_cast<double>(rlineloc));
+        
+        // Skip if too far from a line boundary or if we already have a closer pulse
+        if (linelocDistance > hsyncTolerance) {
+            continue;
+        }
+        
+        if (linelocsDict.find(rlineloc) != linelocsDict.end() &&
+            linelocDistance > linelocsDist[rlineloc]) {
+            continue;  // Already have a closer pulse for this line
+        }
+        
+        // Store this pulse position for this line number
+        linelocsDict[rlineloc] = refinedStart;
+        linelocsDist[rlineloc] = linelocDistance;
+    }
+    
+    // Fill in missing lines by interpolation (matches Python's gap filling)
+    std::vector<double> linelocs(numLines, -1.0);
+    
+    // Copy detected positions
+    for (const auto& [lineNum, pos] : linelocsDict) {
+        if (lineNum >= 0 && lineNum < numLines) {
+            linelocs[lineNum] = pos;
+        }
+    }
+    
+    // Special handling for line 0 if missing
+    if (linelocs[0] < 0) {
+        // Find first valid line
+        int nextValid = -1;
+        for (int i = 0; i < numLines; ++i) {
+            if (linelocs[i] >= 0) {
+                nextValid = i;
+                break;
+            }
+        }
+        if (nextValid >= 0) {
+            linelocs[0] = linelocs[nextValid] - (nextValid * meanLineLength);
+        }
+    }
+    
+    // Fill gaps by interpolating between neighboring detected lines
+    for (int l = 1; l < numLines; ++l) {
+        if (linelocs[l] >= 0) {
+            continue;  // Already have this line
+        }
+        
+        // Find previous and next valid lines
+        int prevValid = -1;
+        int nextValid = -1;
+        
+        for (int i = l - 1; i >= 0; --i) {
+            if (linelocs[i] >= 0) {
+                prevValid = i;
+                break;
+            }
+        }
+        
+        for (int i = l + 1; i < numLines; ++i) {
+            if (linelocs[i] >= 0) {
+                nextValid = i;
+                break;
+            }
+        }
+        
+        // Interpolate based on what neighbors we have
+        if (prevValid < 0 && nextValid >= 0) {
+            // Only have next - extrapolate backwards
+            linelocs[l] = linelocs[nextValid] - (meanLineLength * (nextValid - l));
+        } else if (prevValid >= 0 && nextValid >= 0) {
+            // Have both - interpolate
+            double avglen = (linelocs[nextValid] - linelocs[prevValid]) / 
+                          static_cast<double>(nextValid - prevValid);
+            linelocs[l] = linelocs[prevValid] + (avglen * (l - prevValid));
+        } else if (prevValid >= 0) {
+            // Only have previous - extrapolate forward
+            linelocs[l] = linelocs[prevValid] + (meanLineLength * (l - prevValid));
+        } else {
+            // No neighbors - use estimated position
+            linelocs[l] = line0loc + (l * meanLineLength);
+        }
+    }
+    
+    // Convert back to map
+    std::map<int, double> result;
+    for (int i = 0; i < numLines; ++i) {
+        if (linelocs[i] >= 0) {
+            result[i] = linelocs[i];
+        }
+    }
+    
+    return result;
+}
+
 } // namespace sync
 } // namespace vhsdecode
