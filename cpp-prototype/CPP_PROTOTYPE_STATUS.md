@@ -1,4 +1,4 @@
-# C++ Prototype Status (December 21, 2025)
+# C++ Prototype Status (December 22, 2025)
 
 ## Overview
 
@@ -30,13 +30,14 @@ It serves as a foundation for GPU acceleration via OpenCL.
   - Positive frequencies: multiply by 2
   - Negative frequencies: multiply by 0
 
-### 5. FM Demodulator (`src/demod/fm_demodulator.cpp`)
+### 5. FM Demodulator (`src/demod/fm_demodulator.cpp`) - UPDATED
 - Phase extraction via `std::arg()`
 - Phase difference computation (matching Python's `np.ediff1d`)
 - Phase unwrapping to [-π, π]
 - Clamping to [0, 2π] for bad data handling
 - Frequency scaling: `freq = phase_diff * (sampleRate / 2π)`
-- Envelope-based gating for low-signal areas
+- **Note**: Removed envelope gating (now matches Python exactly)
+- **Known issue**: Edge effects at block boundaries cause 0 Hz values
 
 ### 6. Video Scaling (Updated December 21, 2025)
 - VHS PAL frequency-to-IRE mapping (from vhsdecode/format_defs/vhs.py):
@@ -64,12 +65,15 @@ It serves as a foundation for GPU acceleration via OpenCL.
 - Writes _chroma.tbc chroma files
 - Writes .tbc.json metadata with proper PAL parameters
 
-### 9. Horizontal Sync Detection (`src/sync/sync_detector.cpp`)
+### 9. Horizontal Sync Detection (`src/sync/sync_detector.cpp`) - UPDATED
 - Finds horizontal sync pulses in demodulated video
 - Computes line start positions from pulse locations
-- Aligns video lines to sync pulses for proper TBC output
+- Pulse filtering: 80-1200 samples length, 94-376 for HSYNC candidates
+- Line length validation: ±10% of expected 2560 samples
+- **Fallback to fixed positions when <80% of expected lines detected**
+- **Result**: 218/312 lines (70%) have sync in first 100 samples
 
-### 10. Vertical Sync Detection (`src/sync/vsync_detector.cpp`) ← NEW
+### 10. Vertical Sync Detection (`src/sync/vsync_detector.cpp`)
 - Detects field boundaries by analyzing the vertical blanking interval
 - State machine matching Python's `run_vblank_state_machine()`:
   - HSYNC_SEARCH → EQPL1 → VSYNC → EQPL2 → DONE
@@ -83,20 +87,23 @@ It serves as a foundation for GPU acceleration via OpenCL.
   - First field at sample 191190 (line ~74)
   - Field length: 798735 samples (~312 lines) ✓
 
-## Comparison with Python Decoder
+## Current Issues (December 22, 2025)
 
-### Current Status (December 21, 2025)
-When comparing C++ output with Python vhs-decode output on the same input file:
+### 1. FM Demodulator Edge Effects
+- First few samples of each block produce 0 Hz (clips to 0 digital value)
+- Caused by bandpass filter transient response at block boundaries
+- **Fix needed**: Overlap-save processing to eliminate edge effects
 
-| Metric | Python | C++ | Match |
-|--------|--------|-----|-------|
-| Output line length | 1135 samples | 1135 samples | ✓ |
-| Output sample rate | 17.734475 MHz | 17.734475 MHz | ✓ |
-| Mean digital value | ~19857 | ~19196 | Close |
-| Value range | 0-52200 | 0-65535 | C++ has more clipping |
-| **Field correlation** | - | 0.37-0.46 | Low |
+### 2. Incomplete Sync Detection
+- Only 223/312 lines detected (71.5%)
+- 47 line intervals outside ±10% tolerance
+- EQ pulses at 94 samples are at the edge of the filter threshold
+- **Current mitigation**: Fall back to fixed line positions
 
-### Why Correlation is Low
+### 3. Python Decoder Comparison Blocked
+- Python decoder fails on out1.u8 with "Level detection failed - sync or blank is None"
+- Unable to generate reference output for direct comparison
+- Need valid VHS capture that both decoders can process
 
 1. **Field alignment**: Python starts decoding at file position 983040 (finding first valid field via vertical sync). C++ starts at block-aligned position. Use `--seek` option to align.
 
