@@ -30,6 +30,7 @@ void printUsage(const char* progName) {
     std::cout << "  --format <format>     Tape format (VHS, SVHS, Betamax) [default: VHS]\n";
     std::cout << "  --system <system>     TV system (NTSC, PAL, PAL-M) [default: NTSC]\n";
     std::cout << "  --threads <n>         Number of threads [default: 4]\n";
+    std::cout << "  --length <n>          Number of frames to process (0 = all) [default: 0]\n";
     std::cout << "  --gpu                 Enable GPU acceleration\n";
     std::cout << "  --use-prototype-fft   Use prototype FFT (slower, for testing)\n";
     std::cout << "  --help                Show this help message\n";
@@ -42,6 +43,7 @@ int main(int argc, char* argv[]) {
     std::string formatName = "VHS";
     std::string systemName = "NTSC";
     int threads = 4;
+    int lengthFrames = 0;  // 0 = process all frames
     bool useGPU = false;
     bool usePrototypeFFT = false;
     std::string inputFile;
@@ -63,6 +65,9 @@ int main(int argc, char* argv[]) {
         }
         else if (arg == "--threads" && i + 1 < argc) {
             threads = std::stoi(argv[++i]);
+        }
+        else if (arg == "--length" && i + 1 < argc) {
+            lengthFrames = std::stoi(argv[++i]);
         }
         else if (arg == "--gpu") {
             useGPU = true;
@@ -101,6 +106,7 @@ int main(int argc, char* argv[]) {
         std::cout << "Format:  " << formatToString(format) << "\n";
         std::cout << "System:  " << systemToString(system) << "\n";
         std::cout << "Threads: " << threads << "\n";
+        std::cout << "Length:  " << (lengthFrames > 0 ? std::to_string(lengthFrames) + " frames" : "all") << "\n";
         std::cout << "GPU:     " << (useGPU ? "Enabled" : "Disabled") << "\n";
         std::cout << "Input:   " << inputFile << "\n";
         std::cout << "Output:  " << outputFile << "\n";
@@ -454,6 +460,12 @@ int main(int argc, char* argv[]) {
                     
                     fieldCount++;
                     
+                    // Check if we've reached the frame limit (1 frame = 2 fields)
+                    if (lengthFrames > 0 && fieldCount >= static_cast<size_t>(lengthFrames * 2)) {
+                        std::cout << "] Reached frame limit\n\n";
+                        goto decode_complete;  // Exit both loops
+                    }
+                    
                     // Remove processed samples from buffers
                     size_t samplesToRemove = std::min(samplesNeeded, videoBuffer.size());
                     videoBuffer.erase(videoBuffer.begin(), videoBuffer.begin() + samplesToRemove);
@@ -471,6 +483,7 @@ int main(int argc, char* argv[]) {
             
             std::cout << "] Done\n\n";
             
+            decode_complete:
             // Update video parameters with final field count
             videoParams.numberOfSequentialFields = fieldCount;
             writer.setVideoParameters(videoParams);
