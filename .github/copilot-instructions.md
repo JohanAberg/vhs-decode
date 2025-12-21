@@ -443,7 +443,8 @@ cmake --build . --parallel 8
 - **Hilbert Transform:** Analytic signal generation
 - **FM Demodulator:** Phase extraction and frequency scaling
 - **TBC Scaler:** Bicubic interpolation resampling 2560→1135 samples/line
-- **Sync Detection:** Horizontal sync pulse detection
+- **Horizontal Sync Detection:** Line sync pulse detection
+- **Vertical Sync Detection:** Field boundary detection via state machine
 - **TBC Writer:** .tbc and .tbc.json output at 17.734475 MHz (4×fsc)
 
 ### VHS PAL Parameters (CORRECTED - from vhsdecode/format_defs/vhs.py)
@@ -476,26 +477,28 @@ double outputSampleRate = 17734475.0;  // 4×fsc for PAL
 | Output line length | 1135 | 1135 | ✓ Match |
 | Output sample rate | 17.734475 MHz | 17.734475 MHz | ✓ Match |
 | Mean digital value | ~19857 | ~19196 | Close |
-| Field correlation | - | 0.37-0.46 | Low - needs vertical sync |
+| Field length | ~312 lines | ~312 lines | ✓ Match |
+| Vsync detection | - | ✓ Working | New - 4 fields found |
 
-**Why correlation is low:**
-1. No vertical sync detection - C++ doesn't find proper field boundaries
-2. Line offset (~16-30 lines) due to different field start detection
-3. No sub-sample line interpolation (Python uses linelocs)
+**Vsync detector results (out1.u8):**
+- Detected 1718 pulses: HSYNC=1251, EQ=42, VSYNC=21
+- Found 4 field boundaries
+- First field at sample 191190 (line ~74)
+- Field length: 798735 samples (~312 lines)
 
 ### Missing Components (TODO - Priority Order)
-1. **Vertical sync detection** (HIGH) - Field boundaries not detected, main cause of low correlation
-2. **Sub-sample line positioning** - Python uses linelocs interpolation
-3. **Signal enhancement** - High-frequency boost, spike replacement
-4. **Dropout detection** - Not implemented
-5. **Chroma processing** - Currently copies luma
+1. **Sub-sample line positioning** - Python uses linelocs interpolation
+2. **Signal enhancement** - High-frequency boost, spike replacement
+3. **Dropout detection** - Not implemented
+4. **Chroma processing** - Currently copies luma
 
 ### Key Files
 - `cpp-prototype/src/core/main.cpp` - Entry point with --seek option
 - `cpp-prototype/src/rf/rf_processor.cpp` - RF pipeline
 - `cpp-prototype/src/demod/fm_demodulator.cpp` - FM demodulation
-- `cpp-prototype/src/tbc/tbc_scaler.cpp` - TBC resampling (NEW)
+- `cpp-prototype/src/tbc/tbc_scaler.cpp` - TBC resampling
 - `cpp-prototype/src/sync/sync_detector.cpp` - Horizontal sync detection
+- `cpp-prototype/src/sync/vsync_detector.cpp` - Vertical sync detection (NEW)
 - `cpp-prototype/CPP_PROTOTYPE_STATUS.md` - Detailed status and comparison
 
 ### Testing C++ Output
