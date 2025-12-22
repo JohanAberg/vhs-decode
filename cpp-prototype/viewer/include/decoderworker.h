@@ -8,6 +8,7 @@
 #include <queue>
 #include <memory>
 #include <string>
+#include <vector>
 
 // Forward declarations for decoder types
 namespace vhsdecode {
@@ -40,6 +41,10 @@ struct DecoderConfig {
     double ire0;
     double hzPerIre;
     size_t fileSize;
+    size_t samplesPerFrame;
+    std::string tapeFormat;
+    std::string tvSystem;
+    bool alignToFirstField;
     
     DecoderConfig()
         : rfBandpassLow(1.3)
@@ -47,6 +52,10 @@ struct DecoderConfig {
         , ire0(4.1)
         , hzPerIre(7000.0)
         , fileSize(0)
+        , samplesPerFrame(1600000)
+        , tapeFormat("VHS")
+        , tvSystem("PAL")
+        , alignToFirstField(true)
     {}
 };
 
@@ -107,4 +116,7 @@ private:
     DecoderConfig config_;
     std::vector<std::unique_ptr<DecoderThread>> threads_;
     int nextThread_;
+    int threadCount_;
+
+    size_t computeFileOffset(int frameNumber) const;
 };

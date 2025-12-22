@@ -32,6 +32,7 @@ This is a working prototype for the C++ rewrite of VHS-Decode, focusing initiall
 - ✅ Multi-threaded block processing (thread pool)
 - ✅ Video processor orchestrator
 - ✅ Full RF → TBC pipeline working!
+- ✅ Chroma pipeline implemented & tuned (Saturation matched to Python)
 - ✅ 7-22x faster than Python baseline
 
 **Phase 4: GPU Acceleration** (PHASE 4.3 COMPLETE! 🎉)

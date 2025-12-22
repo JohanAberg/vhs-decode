@@ -119,7 +119,6 @@ void TimelineWidget::drawCachedFrames(QPainter &painter) {
         return;
     }
     
-    int timelineWidth = width() - 2 * MARGIN;
     int timelineTop = (height() - TIMELINE_HEIGHT) / 2;
     int timelineBottom = timelineTop + TIMELINE_HEIGHT;
     

@@ -2,10 +2,24 @@
 #include "ui_mainwindow.h"
 #include "decoderworker.h"
 #include "framecache.h"
+#include "histogramwidget.h"
+#include "vectorscopewidget.h"
+#include "colorsamplerwidget.h"
+#include "scanlineplotwidget.h"
+#include "spectrogramwidget.h"
 #include <QFileDialog>
 #include <QMessageBox>
 #include <QTimer>
 #include <QKeyEvent>
+#include <QDockWidget>
+#include <QGroupBox>
+#include <QLabel>
+#include <QComboBox>
+#include <QSlider>
+#include <QVBoxLayout>
+#include <QHBoxLayout>
+#include <QPushButton>
+#include <QSettings>
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
@@ -14,11 +28,22 @@ MainWindow::MainWindow(QWidget *parent)
     , totalFrames_(0)
     , currentFrame_(0)
     , isPlaying_(false)
+    , histogramOverlay_(nullptr)
+    , vectorscopeOverlay_(nullptr)
+    , scanlinePlotOverlay_(nullptr)
+    , spectrogramDock_(nullptr)
+    , spectrogramWidget_(nullptr)
 {
     ui->setupUi(this);
     
     // Create frame cache (512 MB)
     frameCache_ = std::make_unique<FrameCache>(512 * 1024 * 1024);
+    
+    // Setup analysis widgets
+    setupAnalysisWidgets();
+
+    // Setup spectrogram dock
+    setupSpectrogramDock();
     
     // Connect menu actions
     connect(ui->actionOpen, &QAction::triggered, this, &MainWindow::onOpenFile);
@@ -26,6 +51,7 @@ MainWindow::MainWindow(QWidget *parent)
     connect(ui->actionZoomIn, &QAction::triggered, this, &MainWindow::onZoomIn);
     connect(ui->actionZoomOut, &QAction::triggered, this, &MainWindow::onZoomOut);
     connect(ui->actionZoomReset, &QAction::triggered, this, &MainWindow::onZoomReset);
+    connect(ui->actionToggleSpectrogram, &QAction::toggled, this, &MainWindow::onToggleSpectrogram);
     
     // Connect transport controls
     connect(ui->playButton, &QPushButton::clicked, this, &MainWindow::onPlay);
@@ -42,6 +68,122 @@ MainWindow::MainWindow(QWidget *parent)
             this, &MainWindow::onDemodParameterChanged);
     connect(ui->hzPerIreSpinBox, QOverload<int>::of(&QSpinBox::valueChanged),
             this, &MainWindow::onDemodParameterChanged);
+    
+    // Connect color management controls
+    // Create color management widgets programmatically
+    QGroupBox *colorMgmtBox = new QGroupBox("Color Management", ui->controlPanel);
+    QVBoxLayout *colorMgmtLayout = new QVBoxLayout(colorMgmtBox);
+    
+    // Gamma slider
+    QHBoxLayout *gammaLayout = new QHBoxLayout();
+    gammaLayout->addWidget(new QLabel("Gamma:"));
+    QSlider *gammaSlider = new QSlider(Qt::Horizontal);
+    gammaSlider->setMinimum(10);
+    gammaSlider->setMaximum(300);
+    gammaSlider->setValue(220);
+    gammaLayout->addWidget(gammaSlider);
+    QLabel *gammaValueLabel = new QLabel("2.2");
+    gammaValueLabel->setMinimumWidth(40);
+    gammaLayout->addWidget(gammaValueLabel);
+    colorMgmtLayout->addLayout(gammaLayout);
+    
+    // Exposure slider
+    QHBoxLayout *exposureLayout = new QHBoxLayout();
+    exposureLayout->addWidget(new QLabel("Exposure:"));
+    QSlider *exposureSlider = new QSlider(Qt::Horizontal);
+    exposureSlider->setMinimum(-50);
+    exposureSlider->setMaximum(50);
+    exposureSlider->setValue(0);
+    exposureLayout->addWidget(exposureSlider);
+    QLabel *exposureValueLabel = new QLabel("0.0");
+    exposureValueLabel->setMinimumWidth(40);
+    exposureLayout->addWidget(exposureValueLabel);
+    colorMgmtLayout->addLayout(exposureLayout);
+    
+    // Color profile combo
+    QHBoxLayout *profileLayout = new QHBoxLayout();
+    profileLayout->addWidget(new QLabel("Color Profile:"));
+    QComboBox *colorProfileCombo = new QComboBox();
+    colorProfileCombo->addItem("Rec709");
+    colorProfileCombo->addItem("sRGB");
+    colorProfileCombo->addItem("Rec2020");
+    colorProfileCombo->addItem("DCI-P3");
+    colorProfileCombo->addItem("Adobe RGB");
+    profileLayout->addWidget(colorProfileCombo);
+    colorMgmtLayout->addLayout(profileLayout);
+    
+    // Add to control panel
+    qobject_cast<QVBoxLayout*>(ui->controlPanel->layout())->insertWidget(2, colorMgmtBox);
+    
+    // Create analysis tools group box
+    QGroupBox *analysisBox = new QGroupBox("Analysis Tools", ui->controlPanel);
+    QVBoxLayout *analysisLayout = new QVBoxLayout(analysisBox);
+    
+    QPushButton *histogramBtn = new QPushButton("Toggle Histogram");
+    histogramBtn->setCheckable(true);
+    analysisLayout->addWidget(histogramBtn);
+    
+    QPushButton *vectorscopeBtn = new QPushButton("Toggle Vectorscope");
+    vectorscopeBtn->setCheckable(true);
+    analysisLayout->addWidget(vectorscopeBtn);
+    
+    QPushButton *colorSamplerBtn = new QPushButton("Toggle Color Sampler");
+    colorSamplerBtn->setCheckable(true);
+    analysisLayout->addWidget(colorSamplerBtn);
+    
+    QPushButton *scanlineBtn = new QPushButton("Toggle Scanline Plot");
+    scanlineBtn->setCheckable(true);
+    analysisLayout->addWidget(scanlineBtn);
+    
+    analysisLayout->addWidget(new QLabel("Overlay Options:"));
+    
+    QPushButton *histogramOverlayBtn = new QPushButton("Histogram Overlay");
+    histogramOverlayBtn->setCheckable(true);
+    analysisLayout->addWidget(histogramOverlayBtn);
+    
+    QPushButton *vectorscopeOverlayBtn = new QPushButton("Vectorscope Overlay");
+    vectorscopeOverlayBtn->setCheckable(true);
+    analysisLayout->addWidget(vectorscopeOverlayBtn);
+    
+    QPushButton *scanlineOverlayBtn = new QPushButton("Scanline Plot Overlay");
+    scanlineOverlayBtn->setCheckable(true);
+    analysisLayout->addWidget(scanlineOverlayBtn);
+    
+    // Add to control panel
+    qobject_cast<QVBoxLayout*>(ui->controlPanel->layout())->insertWidget(3, analysisBox);
+    
+    // Connect color management signals
+    connect(gammaSlider, &QSlider::valueChanged, [this, gammaValueLabel](int value) {
+        float gamma = value / 100.0f;
+        gammaValueLabel->setText(QString::number(gamma, 'f', 2));
+        onGammaChanged(value);
+    });
+    
+    connect(exposureSlider, &QSlider::valueChanged, [this, exposureValueLabel](int value) {
+        float exposure = value / 10.0f;
+        exposureValueLabel->setText(QString::number(exposure, 'f', 1));
+        onExposureChanged(value);
+    });
+    
+    connect(colorProfileCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, &MainWindow::onColorProfileChanged);
+    
+    // Connect analysis tool buttons
+    connect(histogramBtn, &QPushButton::clicked, this, &MainWindow::onToggleHistogram);
+    connect(vectorscopeBtn, &QPushButton::clicked, this, &MainWindow::onToggleVectorscope);
+    connect(colorSamplerBtn, &QPushButton::clicked, this, &MainWindow::onToggleColorSampler);
+    connect(scanlineBtn, &QPushButton::clicked, this, &MainWindow::onToggleScanlinePlot);
+    connect(histogramOverlayBtn, &QPushButton::clicked, this, &MainWindow::onHistogramOverlay);
+    connect(vectorscopeOverlayBtn, &QPushButton::clicked, this, &MainWindow::onVectorscopeOverlay);
+    connect(scanlineOverlayBtn, &QPushButton::clicked, this, &MainWindow::onScanlinePlotOverlay);
+    
+    // Connect color management controls (kept for compatibility if UI has these elements)
+    
+    // Connect video widget signals
+    connect(ui->videoWidget, &VideoWidget::hairCrossPositionChanged,
+            this, &MainWindow::onHairCrossPositionChanged);
+    connect(ui->videoWidget, &VideoWidget::scanlineChanged,
+            this, &MainWindow::onScanlineChanged);
     
     // Connect timeline
     connect(ui->timelineWidget, &TimelineWidget::frameSeek,
@@ -65,6 +207,9 @@ MainWindow::MainWindow(QWidget *parent)
     ui->timelineWidget->setFocusPolicy(Qt::StrongFocus);
     
     updateFrameLabel();
+    ui->timelineWidget->setTotalFrames(totalFrames_);
+    ui->timelineWidget->setCurrentFrame(currentFrame_);
+    statusBar()->showMessage(tr("Open an RF file to begin decoding."), 5000);
 }
 
 MainWindow::~MainWindow() {
@@ -72,6 +217,26 @@ MainWindow::~MainWindow() {
         decoderWorker_->clear();
     }
     delete ui;
+}
+
+void MainWindow::saveOverlayGeometry(const QString &name, QWidget *w) {
+    if (!w) return;
+    QSettings settings("vhs-decode", "vhs-rf-viewer");
+    settings.setValue(QString("overlay/%1/pos").arg(name), w->pos());
+    settings.setValue(QString("overlay/%1/size").arg(name), w->size());
+}
+
+bool MainWindow::restoreOverlayGeometry(const QString &name, QWidget *w) {
+    if (!w) return false;
+    QSettings settings("vhs-decode", "vhs-rf-viewer");
+    const QVariant posVar = settings.value(QString("overlay/%1/pos").arg(name));
+    const QVariant sizeVar = settings.value(QString("overlay/%1/size").arg(name));
+    if (posVar.isValid() && sizeVar.isValid()) {
+        w->resize(sizeVar.toSize());
+        w->move(posVar.toPoint());
+        return true;
+    }
+    return false;
 }
 
 void MainWindow::onOpenFile() {
@@ -131,6 +296,10 @@ void MainWindow::loadRFFile(const QString &filename) {
     config.ire0 = ui->ire0SpinBox->value();
     config.hzPerIre = ui->hzPerIreSpinBox->value();
     config.fileSize = fileSize_;
+    config.samplesPerFrame = samplesPerFrame;
+    config.tapeFormat = "VHS";
+    config.tvSystem = "PAL";
+    config.alignToFirstField = true;
     
     decoderWorker_ = std::make_unique<DecoderWorker>(config, 4);
     
@@ -214,6 +383,10 @@ void MainWindow::onDemodParameterChanged() {
     config.ire0 = ui->ire0SpinBox->value();
     config.hzPerIre = ui->hzPerIreSpinBox->value();
     config.fileSize = fileSize_;
+    config.samplesPerFrame = 1600000;
+    config.tapeFormat = "VHS";
+    config.tvSystem = "PAL";
+    config.alignToFirstField = true;
     
     decoderWorker_->updateConfig(config);
     
@@ -231,6 +404,7 @@ void MainWindow::onFrameDecoded(int frameNum, const QImage &image) {
     // Display if it's the current frame
     if (frameNum == currentFrame_) {
         ui->videoWidget->setFrame(image);
+        updateAnalysisWidgets(image);
     }
     
     // Update cache stats in status bar
@@ -326,4 +500,263 @@ void MainWindow::startPlayback() {
 
 void MainWindow::stopPlayback() {
     isPlaying_ = false;
+}
+
+void MainWindow::setupAnalysisWidgets() {
+    // Create dockable histogram widget
+    histogramWidget_ = std::make_unique<HistogramWidget>();
+    QDockWidget *histogramDock = new QDockWidget("Histogram", this);
+    histogramDock->setWidget(histogramWidget_.get());
+    histogramDock->setFeatures(QDockWidget::DockWidgetMovable | QDockWidget::DockWidgetFloatable);
+    addDockWidget(Qt::RightDockWidgetArea, histogramDock);
+    histogramDock->hide();
+    
+    // Create dockable vectorscope widget
+    vectorscopeWidget_ = std::make_unique<VectorscopeWidget>();
+    QDockWidget *vectorscopeDock = new QDockWidget("Vectorscope", this);
+    vectorscopeDock->setWidget(vectorscopeWidget_.get());
+    vectorscopeDock->setFeatures(QDockWidget::DockWidgetMovable | QDockWidget::DockWidgetFloatable);
+    addDockWidget(Qt::RightDockWidgetArea, vectorscopeDock);
+    vectorscopeDock->hide();
+    
+    // Create color sampler widget (shown as top-level tool window when toggled)
+    colorSamplerWidget_ = std::make_unique<ColorSamplerWidget>(this);
+    colorSamplerWidget_->hide();
+    
+    // Create dockable scanline plot widget
+    scanlinePlotWidget_ = std::make_unique<ScanlinePlotWidget>();
+    QDockWidget *scanlineDock = new QDockWidget("Scanline Plot", this);
+    scanlineDock->setWidget(scanlinePlotWidget_.get());
+    scanlineDock->setFeatures(QDockWidget::DockWidgetMovable | QDockWidget::DockWidgetFloatable);
+    addDockWidget(Qt::BottomDockWidgetArea, scanlineDock);
+    scanlineDock->hide();
+}
+
+void MainWindow::updateAnalysisWidgets(const QImage &frame) {
+    if (frame.isNull()) {
+        return;
+    }
+    
+    currentDisplayFrame_ = frame;
+    
+    // Update histogram
+    if (histogramWidget_ && histogramWidget_->isVisible()) {
+        histogramWidget_->updateHistogram(frame);
+    }
+    if (histogramOverlay_) {
+        histogramOverlay_->updateHistogram(frame);
+    }
+    
+    // Update vectorscope
+    if (vectorscopeWidget_ && vectorscopeWidget_->isVisible()) {
+        vectorscopeWidget_->updateVectorscope(frame);
+    }
+    if (vectorscopeOverlay_) {
+        vectorscopeOverlay_->updateVectorscope(frame);
+    }
+    
+    // Update color sampler
+    if (colorSamplerWidget_ && colorSamplerWidget_->isVisible()) {
+        colorSamplerWidget_->updateFrame(frame);
+    }
+}
+
+void MainWindow::onToggleHistogram() {
+    // Toggle visibility of histogram dock
+    QDockWidget *dock = qobject_cast<QDockWidget*>(histogramWidget_->parentWidget());
+    if (dock) {
+        dock->setVisible(!dock->isVisible());
+        if (dock->isVisible() && !currentDisplayFrame_.isNull()) {
+            histogramWidget_->updateHistogram(currentDisplayFrame_);
+        }
+    }
+}
+
+void MainWindow::onToggleVectorscope() {
+    // Toggle visibility of vectorscope dock
+    QDockWidget *dock = qobject_cast<QDockWidget*>(vectorscopeWidget_->parentWidget());
+    if (dock) {
+        dock->setVisible(!dock->isVisible());
+        if (dock->isVisible() && !currentDisplayFrame_.isNull()) {
+            vectorscopeWidget_->updateVectorscope(currentDisplayFrame_);
+        }
+    }
+}
+
+void MainWindow::onToggleColorSampler() {
+    bool show = !colorSamplerWidget_->isVisible();
+    ui->videoWidget->setShowHairCross(show);
+
+    if (show) {
+        // Configure as always-on-top tool window and position near the video widget
+        colorSamplerWidget_->setWindowFlags(Qt::Tool | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint);
+        colorSamplerWidget_->setObjectName("ColorSamplerOverlay");
+        if (!restoreOverlayGeometry("ColorSamplerOverlay", colorSamplerWidget_.get())) {
+            colorSamplerWidget_->resize(320, colorSamplerWidget_->height());
+            QPoint pos = ui->videoWidget->mapToGlobal(QPoint(10, 360));
+            colorSamplerWidget_->move(pos);
+        }
+        colorSamplerWidget_->show();
+
+        if (!currentDisplayFrame_.isNull()) {
+            colorSamplerWidget_->updateFrame(currentDisplayFrame_);
+        }
+    } else {
+        saveOverlayGeometry("ColorSamplerOverlay", colorSamplerWidget_.get());
+        colorSamplerWidget_->hide();
+    }
+}
+
+void MainWindow::onToggleScanlinePlot() {
+    // Toggle visibility of scanline plot dock
+    QDockWidget *dock = qobject_cast<QDockWidget*>(scanlinePlotWidget_->parentWidget());
+    if (dock) {
+        bool show = !dock->isVisible();
+        dock->setVisible(show);
+        // If showing, ensure hair cross is enabled and update immediately
+        if (show) {
+            if (!ui->videoWidget->getShowHairCross()) {
+                ui->videoWidget->setShowHairCross(true);
+            }
+            if (!currentDisplayFrame_.isNull()) {
+                int scanlineY = ui->videoWidget->getHairCrossPos().y();
+                scanlinePlotWidget_->updateScanline(currentDisplayFrame_, scanlineY);
+            }
+        }
+    }
+}
+
+void MainWindow::onHistogramOverlay() {
+    if (!histogramOverlay_) {
+        histogramOverlay_ = new HistogramWidget(this);
+        histogramOverlay_->setOverlayMode(true);
+        histogramOverlay_->setWindowFlags(Qt::Tool | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint);
+        histogramOverlay_->setObjectName("HistogramOverlay");
+        if (!restoreOverlayGeometry("HistogramOverlay", histogramOverlay_)) {
+            histogramOverlay_->resize(256, 150);
+            QPoint pos = ui->videoWidget->mapToGlobal(QPoint(10, 10));
+            histogramOverlay_->move(pos);
+        }
+        histogramOverlay_->show();
+        
+        if (!currentDisplayFrame_.isNull()) {
+            histogramOverlay_->updateHistogram(currentDisplayFrame_);
+        }
+    } else {
+        saveOverlayGeometry("HistogramOverlay", histogramOverlay_);
+        delete histogramOverlay_;
+        histogramOverlay_ = nullptr;
+    }
+}
+
+void MainWindow::onVectorscopeOverlay() {
+    if (!vectorscopeOverlay_) {
+        // Create as a top-level tool window linked to main window
+        vectorscopeOverlay_ = new VectorscopeWidget(this);
+        vectorscopeOverlay_->setOverlayMode(true);
+        vectorscopeOverlay_->setWindowFlags(Qt::Tool | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint);
+        vectorscopeOverlay_->setObjectName("VectorscopeOverlay");
+        if (!restoreOverlayGeometry("VectorscopeOverlay", vectorscopeOverlay_)) {
+            vectorscopeOverlay_->resize(256, 256);
+            // Position near the video widget
+            QPoint pos = ui->videoWidget->mapToGlobal(QPoint(10, 170));
+            vectorscopeOverlay_->move(pos);
+        }
+        vectorscopeOverlay_->show();
+        
+        if (!currentDisplayFrame_.isNull()) {
+            vectorscopeOverlay_->updateVectorscope(currentDisplayFrame_);
+        }
+    } else {
+        saveOverlayGeometry("VectorscopeOverlay", vectorscopeOverlay_);
+        delete vectorscopeOverlay_;
+        vectorscopeOverlay_ = nullptr;
+    }
+}
+
+void MainWindow::onScanlinePlotOverlay() {
+    if (!scanlinePlotOverlay_) {
+        scanlinePlotOverlay_ = new ScanlinePlotWidget(this);
+        scanlinePlotOverlay_->setOverlayMode(true);
+        scanlinePlotOverlay_->setWindowFlags(Qt::Tool | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint);
+        scanlinePlotOverlay_->setObjectName("ScanlinePlotOverlay");
+        if (!restoreOverlayGeometry("ScanlinePlotOverlay", scanlinePlotOverlay_)) {
+            scanlinePlotOverlay_->resize(400, 150);
+            QPoint pos = ui->videoWidget->mapToGlobal(QPoint(10, 440));
+            scanlinePlotOverlay_->move(pos);
+        }
+        scanlinePlotOverlay_->show();
+        
+        if (!currentDisplayFrame_.isNull() && ui->videoWidget->getShowHairCross()) {
+            int scanlineY = ui->videoWidget->getHairCrossPos().y();
+            scanlinePlotOverlay_->updateScanline(currentDisplayFrame_, scanlineY);
+        }
+    } else {
+        saveOverlayGeometry("ScanlinePlotOverlay", scanlinePlotOverlay_);
+        delete scanlinePlotOverlay_;
+        scanlinePlotOverlay_ = nullptr;
+    }
+}
+
+void MainWindow::onGammaChanged(int value) {
+    // Gamma slider: 10-300 (0.1 to 3.0)
+    float gamma = value / 100.0f;
+    ui->videoWidget->setGamma(gamma);
+    statusBar()->showMessage(QString("Gamma: %1").arg(gamma, 0, 'f', 2), 2000);
+}
+
+void MainWindow::onExposureChanged(int value) {
+    // Exposure slider: -50 to +50 (-5.0 to +5.0 stops)
+    float exposure = value / 10.0f;
+    ui->videoWidget->setExposure(exposure);
+    statusBar()->showMessage(QString("Exposure: %1 stops").arg(exposure, 0, 'f', 1), 2000);
+}
+
+void MainWindow::onColorProfileChanged(int index) {
+    ui->videoWidget->setColorProfile(index);
+    const char* profiles[] = {"Rec709", "sRGB", "Rec2020", "DCI-P3", "Adobe RGB"};
+    if (index >= 0 && index < 5) {
+        statusBar()->showMessage(QString("Color Profile: %1").arg(profiles[index]), 2000);
+    }
+}
+
+void MainWindow::onHairCrossPositionChanged(const QPoint &imagePos, const QPoint &screenPos) {
+    Q_UNUSED(screenPos);
+    
+    if (colorSamplerWidget_ && colorSamplerWidget_->isVisible()) {
+        colorSamplerWidget_->setSamplePosition(imagePos);
+    }
+}
+
+void MainWindow::onScanlineChanged(int scanlineY) {
+    if (!currentDisplayFrame_.isNull()) {
+        if (scanlinePlotWidget_ && scanlinePlotWidget_->isVisible()) {
+            scanlinePlotWidget_->updateScanline(currentDisplayFrame_, scanlineY);
+        }
+        if (scanlinePlotOverlay_) {
+            scanlinePlotOverlay_->updateScanline(currentDisplayFrame_, scanlineY);
+        }
+    }
+}
+
+void MainWindow::setupSpectrogramDock() {
+    // Create spectrogram widget
+    spectrogramWidget_ = new SpectrogramWidget(this);
+    
+    // Create dock widget
+    spectrogramDock_ = new QDockWidget("FM Spectrogram", this);
+    spectrogramDock_->setWidget(spectrogramWidget_);
+    spectrogramDock_->setAllowedAreas(Qt::BottomDockWidgetArea | Qt::RightDockWidgetArea);
+    
+    // Add to main window (bottom by default)
+    addDockWidget(Qt::BottomDockWidgetArea, spectrogramDock_);
+    
+    // Initially hidden
+    spectrogramDock_->hide();
+}
+
+void MainWindow::onToggleSpectrogram(bool checked) {
+    if (spectrogramDock_) {
+        spectrogramDock_->setVisible(checked);
+    }
 }

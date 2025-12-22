@@ -25,6 +25,7 @@ public:
         int burstStartSample = 0;
         int burstEndSample = 0;
         double burstAbsRef = 0.0;
+        double phaseOffset = 0.0; // Phase offset in radians
         
         // SOS coefficients for FChromaFinal (Bandpass 3-5.5MHz)
         std::vector<std::array<double, 6>> filterSOS;

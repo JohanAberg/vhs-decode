@@ -200,16 +200,129 @@ Worker Threads (4x)
 - [ ] Audio (Hi-Fi) decoding and playback
 - [ ] Export decoded frames/sequences
 - [ ] TBC file export
-- [ ] Waveform monitor overlay
-- [ ] Vectorscope display
-- [ ] Spectrum analyzer
-- [ ] Dropout visualization
-- [ ] Real-time chroma processing
 - [ ] Parameter presets/profiles
 - [ ] Batch processing mode
 - [ ] Multiple file comparison
 - [ ] Frame diff viewer
 - [ ] Metadata editor
+- [ ] Full ACES color management (see ACES_RESEARCH.md)
+- [ ] Custom LUT support
+- [ ] Real-time chroma processing
+
+## NEW FEATURES (Latest Update - Dec 2024)
+
+### Analysis Widgets
+
+#### 1. Histogram Widget
+- **GPU-accelerated rendering** using OpenGL
+- **Dual mode**: Dockable panel or overlay
+- RGB channel display (red, green, blue)
+- Luma (Y) channel display
+- 256 bins per channel
+- Linear or logarithmic scale
+- Real-time updates during playback
+- Movable and resizable in overlay mode
+
+#### 2. Vectorscope Widget
+- **GPU-accelerated point rendering**
+- **Dual mode**: Dockable panel or overlay
+- YUV color space representation
+- Standard color bar targets (75% amplitude)
+- Rec. 709 color space
+- Adjustable intensity
+- Circular graticule with crosshairs
+- Real-time chroma analysis
+- Movable and resizable in overlay mode
+
+#### 3. Color Sampler Widget
+- **Hair cross cursor** overlaid on video
+- Pixel-level color sampling
+- Displays RGB values (0-255)
+- Displays Luma value (Rec. 709)
+- Color swatch preview
+- RGB value bars
+- Pixel coordinate display
+- Real-time update on mouse movement
+
+#### 4. Scanline Plot Widget
+- **GPU-accelerated line rendering**
+- **Dual mode**: Dockable panel or overlay
+- Horizontal line analysis
+- RGB channel plots
+- Luma plot
+- Synchronized with hair cross position
+- Full width analysis (all pixels in scanline)
+- Real-time updates
+- Movable and resizable in overlay mode
+
+### Color Management
+
+#### Gamma Control
+- Slider range: 0.1 to 3.0
+- Default: 2.2 (standard gamma)
+- Real-time adjustment
+- Display value indicator
+- Applied per-pixel in GPU
+
+#### Exposure Control
+- Slider range: -5.0 to +5.0 stops
+- Default: 0.0 (no adjustment)
+- Real-time adjustment
+- Display value indicator
+- Linear exposure multiplication
+
+#### Color Profile Selection
+- **Rec709**: ITU-R BT.709 (HDTV standard)
+- **sRGB**: Standard RGB (web/computer graphics)
+- **Rec2020**: ITU-R BT.2020 (UHDTV/HDR)
+- **DCI-P3**: Digital Cinema color space
+- **Adobe RGB**: Adobe RGB (1998) for print/photo
+
+#### ACES Support (Planned)
+- Research completed (see ACES_RESEARCH.md)
+- Simplified ACES-inspired transforms planned
+- Matrix-based color space conversions
+- No full OCIO dependency (too complex for VHS content)
+- Future enhancement if needed
+
+### Implementation Details
+
+#### GPU Acceleration
+All analysis widgets use **OpenGL** for rendering:
+- Histogram: GPU-based binning and rendering
+- Vectorscope: Point-based GPU rendering with adjustable intensity
+- Scanline Plot: GPU line strip rendering
+- Color transforms: Per-pixel shader computations
+
+#### Performance
+- Real-time analysis at 25 fps playback
+- Minimal CPU overhead (GPU handles rendering)
+- Efficient memory usage
+- Asynchronous updates
+
+#### UI Integration
+- **Dockable Widgets**: Can be docked to main window edges
+- **Overlay Mode**: Floating overlays on video widget
+- **Draggable**: All overlays can be moved by mouse
+- **Toggle Buttons**: Quick show/hide controls
+- **Keyboard Shortcuts**: Coming soon
+
+## Future Enhancements (Updated)
+
+- [ ] NTSC format support
+- [ ] Audio (Hi-Fi) decoding and playback
+- [ ] Export decoded frames/sequences
+- [ ] TBC file export
+- [ ] Parameter presets/profiles
+- [ ] Batch processing mode
+- [ ] Multiple file comparison
+- [ ] Frame diff viewer
+- [ ] Metadata editor
+- [ ] Full ACES color management with OCIO
+- [ ] Custom 3D LUT support
+- [ ] Real-time chroma processing
+- [ ] HDR display output (ST.2084/HLG)
+- [ ] Keyboard shortcuts for analysis tools
 
 ## Comparison with Python Decoder
 

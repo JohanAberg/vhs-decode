@@ -2,13 +2,118 @@
 #include <QMutexLocker>
 #include <QImage>
 #include <QDebug>
-#include <QPainter>
-#include <QFont>
 #include <stdexcept>
-#include <cmath>
+#include <algorithm>
+#include <vector>
+#include <utility>
 
-// MOCK IMPLEMENTATION - Decoder integration TODO
-// This allows the UI to launch without full decoder integration
+#include "formats/format_base.hpp"
+#include "vhsdecode/decoder_pipeline.hpp"
+#include "vhsdecode/types.hpp"
+
+using vhsdecode::VideoField;
+using vhsdecode::FieldMetadata;
+using vhsdecode::core::DecoderPipelineOptions;
+using vhsdecode::core::DecoderPipelineResult;
+using vhsdecode::core::DecoderObserver;
+
+namespace {
+
+class FrameCaptureObserver : public DecoderObserver {
+public:
+    void onFieldDecoded(VideoField&& composite,
+                        VideoField&& /*chroma*/,
+                        const FieldMetadata& metadata) override {
+        fields_.push_back({std::move(composite), metadata});
+        maybeComposeImage();
+    }
+
+    bool hasImage() const { return imageReady_; }
+
+    void finalize() {
+        if (!imageReady_) {
+            maybeComposeImage();
+        }
+    }
+
+    QImage takeImage() {
+        if (!imageReady_) {
+            finalize();
+        }
+        QImage result = image_;
+        image_ = QImage();
+        imageReady_ = false;
+        fields_.clear();
+        return result;
+    }
+
+private:
+    struct FieldData {
+        VideoField data;
+        FieldMetadata metadata;
+    };
+
+    void maybeComposeImage() {
+        if (fields_.empty()) {
+            return;
+        }
+        image_ = composeImage();
+        imageReady_ = !image_.isNull();
+    }
+
+    QImage composeImage() const {
+        if (fields_.empty()) {
+            return QImage();
+        }
+
+        size_t maxWidth = 0;
+        size_t maxLines = 0;
+        for (const auto& field : fields_) {
+            if (!field.data.empty()) {
+                maxWidth = std::max(maxWidth, field.data.front().size());
+            }
+            maxLines = std::max(maxLines, field.data.size());
+        }
+
+        if (maxWidth == 0 || maxLines == 0) {
+            return QImage();
+        }
+
+        const int imageWidth = static_cast<int>(maxWidth);
+        const int imageHeight = static_cast<int>(maxLines * 2);
+        QImage image(imageWidth, imageHeight, QImage::Format_Grayscale8);
+        image.fill(0);
+
+        auto writeField = [&](const FieldData& fieldData) {
+            const auto& lines = fieldData.data;
+            const bool firstField = fieldData.metadata.isFirstField;
+            for (size_t lineIdx = 0; lineIdx < lines.size(); ++lineIdx) {
+                size_t targetRow = lineIdx * 2 + (firstField ? 0 : 1);
+                if (targetRow >= static_cast<size_t>(imageHeight)) {
+                    break;
+                }
+                uchar* scanLine = image.scanLine(static_cast<int>(targetRow));
+                const auto& samples = lines[lineIdx];
+                const size_t lineWidth = std::min(samples.size(), static_cast<size_t>(imageWidth));
+                for (size_t col = 0; col < lineWidth; ++col) {
+                    scanLine[col] = static_cast<uchar>(samples[col] >> 8);
+                }
+            }
+        };
+
+        for (const auto& field : fields_) {
+            writeField(field);
+        }
+
+        return image;
+    }
+
+    std::vector<FieldData> fields_;
+    QImage image_;
+    bool imageReady_ = false;
+};
+
+} // namespace
 
 // DecoderThread implementation
 DecoderThread::DecoderThread(const DecoderConfig &config, QObject *parent)
@@ -36,15 +141,11 @@ void DecoderThread::stop() {
 }
 
 void DecoderThread::run() {
-    // MOCK: No real decoder initialization
-    qDebug() << "DecoderThread started (MOCK MODE - decoder integration pending)";
-    
     if (config_.filename.empty()) {
         emit decodingError(-1, "No filename specified");
         return;
     }
-    
-    // Process jobs
+
     while (!shouldStop_) {
         DecodeJob job;
         
@@ -52,6 +153,9 @@ void DecoderThread::run() {
             QMutexLocker locker(&mutex_);
             if (jobQueue_.empty()) {
                 condition_.wait(&mutex_, 100);
+                if (shouldStop_) {
+                    break;
+                }
                 continue;
             }
             
@@ -69,34 +173,32 @@ void DecoderThread::run() {
 }
 
 QImage DecoderThread::decodeFrame(int frameNumber, size_t fileOffset) {
-    // MOCK: Generate test pattern instead of real decoding
-    const int width = 720;
-    const int height = 576; // PAL resolution
-    
-    QImage image(width, height, QImage::Format_Grayscale8);
-    image.fill(128); // Gray background
-    
-    QPainter painter(&image);
-    
-    // Draw color bars at top
-    for (int i = 0; i < 8; i++) {
-        int gray = (i * 255) / 7;
-        painter.fillRect(i * width / 8, 0, width / 8, height / 3, QColor(gray, gray, gray));
+    (void)frameNumber;
+    FrameCaptureObserver observer;
+
+    DecoderPipelineOptions options;
+    options.inputPath = config_.filename;
+    options.outputBasename.clear();
+    options.lengthFrames = 1;
+    options.threadCount = 1;
+    options.seekOffset = fileOffset;
+    options.alignToFirstField = config_.alignToFirstField && (fileOffset == 0);
+    options.enableFileOutput = false;
+
+    try {
+        options.format = vhsdecode::formats::formatFromString(config_.tapeFormat);
+        options.system = vhsdecode::formats::systemFromString(config_.tvSystem);
+    } catch (const std::exception &ex) {
+        throw std::runtime_error(std::string("Invalid decoder configuration: ") + ex.what());
     }
-    
-    // Draw frame info text
-    painter.setPen(Qt::white);
-    QFont font("Arial", 32, QFont::Bold);
-    painter.setFont(font);
-    
-    QString text = QString("MOCK DECODER\n\nFrame %1\n\nDecoder Integration Pending\n\nUI Preview Mode").arg(frameNumber);
-    painter.drawText(QRect(0, height / 3, width, height * 2 / 3), Qt::AlignCenter, text);
-    
-    painter.end();
-    
-    // Simulate processing delay
-    QThread::msleep(50);
-    
+
+    (void)runDecoderPipeline(options, &observer);
+    observer.finalize();
+
+    QImage image = observer.takeImage();
+    if (image.isNull()) {
+        throw std::runtime_error("Decoder produced no image data");
+    }
     return image;
 }
 
@@ -105,9 +207,10 @@ DecoderWorker::DecoderWorker(const DecoderConfig &config, int numThreads, QObjec
     : QObject(parent)
     , config_(config)
     , nextThread_(0)
+    , threadCount_(std::max(1, numThreads))
 {
     // Create worker threads
-    for (int i = 0; i < numThreads; i++) {
+    for (int i = 0; i < threadCount_; i++) {
         auto thread = std::make_unique<DecoderThread>(config, this);
         
         connect(thread.get(), &DecoderThread::frameDecoded,
@@ -120,6 +223,7 @@ DecoderWorker::DecoderWorker(const DecoderConfig &config, int numThreads, QObjec
         thread->start();
         threads_.push_back(std::move(thread));
     }
+
 }
 
 DecoderWorker::~DecoderWorker() {
@@ -134,7 +238,7 @@ void DecoderWorker::requestFrame(int frameNumber, int priority) {
     // Round-robin job distribution
     DecodeJob job;
     job.frameNumber = frameNumber;
-    job.fileOffset = 0; // Will be calculated in thread
+    job.fileOffset = computeFileOffset(frameNumber);
     job.priority = priority;
     
     threads_[nextThread_]->addJob(job);
@@ -144,17 +248,17 @@ void DecoderWorker::requestFrame(int frameNumber, int priority) {
 void DecoderWorker::updateConfig(const DecoderConfig &config) {
     clear();
     config_ = config;
-    
+
     // Recreate threads with new config
-    threads_.clear();
-    nextThread_ = 0;
-    
-    int numThreads = 4; // Default
-    for (int i = 0; i < numThreads; i++) {
+    for (int i = 0; i < threadCount_; i++) {
         auto thread = std::make_unique<DecoderThread>(config_, this);
         
-        connect(thread.get(), &DecoderThread::frameDecoded,
-                this, &DecoderWorker::onFrameDecoded);
+    connect(thread.get(), &DecoderThread::frameDecoded,
+        this, &DecoderWorker::onFrameDecoded);
+    connect(thread.get(), &DecoderThread::decodingError,
+        [](int frame, const QString &error) {
+            qWarning() << "Frame" << frame << "decode error:" << error;
+        });
         
         thread->start();
         threads_.push_back(std::move(thread));
@@ -168,8 +272,31 @@ void DecoderWorker::clear() {
             thread->wait();
         }
     }
+    threads_.clear();
+    nextThread_ = 0;
 }
 
 void DecoderWorker::onFrameDecoded(int frameNum, const QImage image) {
     emit frameDecoded(frameNum, image);
+}
+
+size_t DecoderWorker::computeFileOffset(int frameNumber) const {
+    if (frameNumber <= 0) {
+        return 0;
+    }
+
+    const size_t samplesPerFrame = std::max<size_t>(1, config_.samplesPerFrame);
+    size_t offset = static_cast<size_t>(frameNumber) * samplesPerFrame;
+
+    if (config_.fileSize > 0) {
+        if (offset >= config_.fileSize) {
+            if (config_.fileSize > samplesPerFrame) {
+                offset = config_.fileSize - samplesPerFrame;
+            } else {
+                offset = 0;
+            }
+        }
+    }
+
+    return offset;
 }

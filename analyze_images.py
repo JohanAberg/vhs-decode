@@ -1,3 +1,4 @@
+import sys
 import numpy as np
 from PIL import Image
 
@@ -66,8 +67,19 @@ def summarize_channel(name, ref, test):
 
 
 def main():
-    generated = load_image("cpp_chroma_het_viewable.png")
-    baseline = load_image("cpp-prototype/frame_pal_chroma_ar43_1_out1.tbc.png")
+    if len(sys.argv) > 1:
+        generated_path = sys.argv[1]
+    else:
+        generated_path = "cpp_out_boost.png"
+        
+    if len(sys.argv) > 2:
+        reference_path = sys.argv[2]
+    else:
+        reference_path = "python_out.png"
+
+    print(f"Comparing {generated_path} vs {reference_path}")
+    generated = load_image(generated_path)
+    baseline = load_image(reference_path)
 
     generated_cropped = auto_crop_black_borders(generated)
     baseline_cropped = auto_crop_black_borders(baseline)
