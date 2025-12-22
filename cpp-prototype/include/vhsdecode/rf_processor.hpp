@@ -102,7 +102,6 @@ private:
     
     std::unique_ptr<FFTEngine> fftEngine_;
     std::unique_ptr<FilterBank> filterBank_;
-    std::unique_ptr<HilbertTransform> hilbert_;
     
     // Convert uint8 to float
     RealArray uint8ToFloat(const std::vector<uint8_t>& data);

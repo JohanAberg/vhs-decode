@@ -56,6 +56,13 @@ public:
      * @return Real time-domain array (blockSize samples)
      */
     RealArray inverseFFT(const ComplexArray& input);
+
+    /**
+     * @brief Inverse FFT: complex to complex
+     * @param input Complex frequency-domain array (blockSize bins)
+     * @return Complex time-domain array (blockSize samples)
+     */
+    ComplexArray complexInverseFFT(const ComplexArray& input);
     
     /**
      * @brief Apply frequency-domain filter

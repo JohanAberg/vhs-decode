@@ -9,49 +9,6 @@
 namespace vhsdecode {
 namespace rf {
 
-namespace {
-// Simple iterative Cooley-Tukey FFT for complex data (used for analytic signal iFFT)
-void complexFFT(std::vector<std::complex<float>>& data, bool inverse) {
-    const size_t n = data.size();
-    if (n <= 1) return;
-
-    // Bit-reversal permutation
-    for (size_t i = 1, j = 0; i < n; ++i) {
-        size_t bit = n >> 1;
-        for (; j & bit; bit >>= 1) {
-            j ^= bit;
-        }
-        j ^= bit;
-        if (i < j) {
-            std::swap(data[i], data[j]);
-        }
-    }
-
-    // Iterative Danielson-Lanczos
-    for (size_t len = 2; len <= n; len <<= 1) {
-        float angle = (inverse ? 2.0f : -2.0f) * static_cast<float>(M_PI) / static_cast<float>(len);
-        std::complex<float> wlen(std::cos(angle), std::sin(angle));
-        for (size_t i = 0; i < n; i += len) {
-            std::complex<float> w(1.0f, 0.0f);
-            for (size_t j = 0; j < len / 2; ++j) {
-                auto u = data[i + j];
-                auto v = data[i + j + len / 2] * w;
-                data[i + j] = u + v;
-                data[i + j + len / 2] = u - v;
-                w *= wlen;
-            }
-        }
-    }
-
-    if (inverse) {
-        float invN = 1.0f / static_cast<float>(n);
-        for (auto& x : data) {
-            x *= invN;
-        }
-    }
-}
-} // namespace
-
 RFProcessor::RFProcessor(const Config& config)
     : config_(config)
 {
@@ -67,7 +24,6 @@ RFProcessor::RFProcessor(const Config& config)
     // Initialize components
     fftEngine_ = std::make_unique<FFTEngine>(config_.blockSize, config_.useGPU);
     filterBank_ = std::make_unique<FilterBank>(config_.sampleRateMHz, config_.blockSize);
-    hilbert_ = std::make_unique<HilbertTransform>(config_.blockSize);
     
     // Create RF bandpass filter matching Python VHS PAL configuration:
     // Python uses separate HPF and LPF with high orders instead of a single BPF
@@ -78,6 +34,21 @@ RFProcessor::RFProcessor(const Config& config)
     
     // Create combined bandpass filter by multiplying HPF * LPF
     filterBank_->createCombinedFilter("rf_bandpass", "rf_hpf", "rf_lpf");
+
+    // Fuse Hilbert transform into bandpass filter
+    // Get the bandpass filter
+    auto bandpass = filterBank_->getFilter("rf_bandpass");
+    
+    // Apply Hilbert transform (multiply by 2 for positive frequencies)
+    // Note: Hilbert filter is [1, 2, 2, ..., 2, 1] (DC, pos, ..., pos, Nyquist)
+    for (size_t i = 0; i < bandpass.size(); ++i) {
+        if (i > 0 && i < bandpass.size() - 1) {
+            bandpass[i] *= 2.0f;
+        }
+    }
+    
+    // Save as "rf_analytic"
+    filterBank_->setFilter("rf_analytic", bandpass);
 }
 
 RFProcessor::~RFProcessor() = default;
@@ -93,6 +64,15 @@ void RFProcessor::setBandpassFrequencies(double lowMHz, double highMHz) {
     filterBank_->createButterworthLPF("rf_lpf", highMHz, 20);
     filterBank_->createButterworthHPF("rf_hpf", lowMHz, 12);
     filterBank_->createCombinedFilter("rf_bandpass", "rf_hpf", "rf_lpf");
+
+    // Fuse Hilbert transform
+    auto bandpass = filterBank_->getFilter("rf_bandpass");
+    for (size_t i = 0; i < bandpass.size(); ++i) {
+        if (i > 0 && i < bandpass.size() - 1) {
+            bandpass[i] *= 2.0f;
+        }
+    }
+    filterBank_->setFilter("rf_analytic", bandpass);
 }
 
 RealArray RFProcessor::uint8ToFloat(const std::vector<uint8_t>& data) {
@@ -129,34 +109,24 @@ RFProcessor::Result RFProcessor::processBlock(const RealArray& rfData) {
     // Step 1: Forward FFT (real to complex)
     auto fftData = fftEngine_->forwardFFT(rfData);
     
-    // Step 2: Apply RF bandpass filter
-    const auto& rfFilter = filterBank_->getFilter("rf_bandpass");
-    fftEngine_->applyFilter(fftData, rfFilter);
+    // Step 2: Apply fused Analytic Filter (Bandpass + Hilbert)
+    const auto& analyticFilter = filterBank_->getFilter("rf_analytic");
+    fftEngine_->applyFilter(fftData, analyticFilter);
     
-    // Step 3: Apply Hilbert transform (creates analytic signal)
-    hilbert_->applyToFFT(fftData);
-    
-    // Step 4: Inverse FFT (complex to real for filtered signal)
-    // But we want the complex analytic signal, so we need to handle this differently
-    // For now, store the filtered FFT data
-    
-    // Convert FFT to complex time-domain (analytic signal) via complex iFFT
+    // Step 3: Inverse FFT (complex to complex)
+    // We need to construct full spectrum for C2C IFFT
+    // Since we have analytic signal (negative freqs = 0), we just pad with zeros.
     size_t N = config_.blockSize;
-    result.analyticSignal.resize(N);
-
-    // Reconstruct full complex spectrum with negative frequencies zeroed
     ComplexArray fullSpectrum(N);
+    
+    // Copy positive frequencies
     for (size_t i = 0; i <= N/2; ++i) {
         fullSpectrum[i] = fftData[i];
     }
-    for (size_t i = N/2 + 1; i < N; ++i) {
-        fullSpectrum[i] = std::complex<float>(0.0f, 0.0f);
-    }
+    // Negative frequencies are already 0 (default constructor)
 
-    complexFFT(fullSpectrum, true);
-    for (size_t i = 0; i < N; ++i) {
-        result.analyticSignal[i] = fullSpectrum[i];
-    }
+    // Perform C2C IFFT
+    result.analyticSignal = fftEngine_->complexInverseFFT(fullSpectrum);
     
     // Debug: print analytic signal
     static int debugAnalyticCount = 0;

@@ -203,35 +203,35 @@ bool FilterBank::createButterworthBPF(const std::string& name, double lowCutoffM
     return true;
 }
 
-bool FilterBank::createCombinedFilter(const std::string& name,
-                                       const std::string& filter1Name,
-                                       const std::string& filter2Name) {
-    // Create combined filter by element-wise multiplication of two existing filters
-    // This allows creating bandpass from separate HPF * LPF with different orders
-    
-    if (!hasFilter(filter1Name)) {
-        return false;
-    }
-    if (!hasFilter(filter2Name)) {
+bool FilterBank::createCombinedFilter(const std::string& name, 
+                                      const std::string& filter1Name,
+                                      const std::string& filter2Name) {
+    if (filters_.find(filter1Name) == filters_.end() || 
+        filters_.find(filter2Name) == filters_.end()) {
         return false;
     }
     
-    const auto& filter1 = filters_[filter1Name];
-    const auto& filter2 = filters_[filter2Name];
+    const auto& f1 = filters_[filter1Name];
+    const auto& f2 = filters_[filter2Name];
     
-    if (filter1.size() != filter2.size()) {
+    if (f1.size() != f2.size()) {
         return false;
     }
     
-    ComplexArray response(filter1.size());
-    
-    for (size_t i = 0; i < filter1.size(); ++i) {
-        // Element-wise multiplication of complex filter coefficients
-        response[i] = filter1[i] * filter2[i];
+    ComplexArray combined(f1.size());
+    for (size_t i = 0; i < f1.size(); ++i) {
+        combined[i] = f1[i] * f2[i];
     }
     
-    filters_[name] = std::move(response);
+    filters_[name] = combined;
     return true;
+}
+
+void FilterBank::setFilter(const std::string& name, const ComplexArray& coefficients) {
+    if (coefficients.size() != blockSize_ / 2 + 1) {
+        throw std::invalid_argument("Filter size must match FFT size (N/2 + 1)");
+    }
+    filters_[name] = coefficients;
 }
 
 const ComplexArray& FilterBank::getFilter(const std::string& name) const {

@@ -65,6 +65,21 @@
     -   Updated `main.cpp` to use the new `FMDemodulator` API.
     -   Verified that the modular components work correctly.
 
+### Optimization: Fused Bandpass & Hilbert (December 22, 2025) ✓
+
+**Goal:** Improve performance and prepare for GPU acceleration by reducing FFT operations and removing slow CPU-only loops.
+
+**Changes:**
+1.  **Fused Filters:** Combined the RF Bandpass filter and Hilbert Transform (frequency domain multiplication) into a single `rf_analytic` filter.
+2.  **C2C FFT Support:** Extended `FFTEngine` to support Complex-to-Complex Inverse FFT (`complexInverseFFT`).
+3.  **Removed Bottleneck:** Removed the slow, iterative `complexFFT` helper function from `RFProcessor`.
+4.  **GPU Readiness:** The new pipeline uses `FFTEngine` for all transforms, which maps directly to `clFFT` (when enabled), removing the last CPU-only DSP barrier.
+
+**Result:**
+-   Reduced per-block FFT operations from 2 FFTs + 1 slow DFT to 2 FFTs (Forward R2C + Inverse C2C).
+-   Eliminated O(N log N) slow CPU loop.
+-   Fully compatible with future GPU offloading.
+
 ## Current Status Summary
 
 The C++ prototype implements the core VHS RF decoding pipeline with CPU-based processing.

@@ -121,6 +121,13 @@ public:
     bool createCombinedFilter(const std::string& name, 
                               const std::string& filter1Name,
                               const std::string& filter2Name);
+
+    /**
+     * @brief Set filter coefficients directly
+     * @param name Filter name
+     * @param coefficients Filter coefficients
+     */
+    void setFilter(const std::string& name, const ComplexArray& coefficients);
     
     /**
      * @brief Get filter coefficients
