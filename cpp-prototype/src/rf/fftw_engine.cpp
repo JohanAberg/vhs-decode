@@ -3,9 +3,37 @@
 #include <stdexcept>
 #include <cmath>
 #include <algorithm>
+#include <mutex>
+#include <iostream>
 
 namespace vhsdecode {
 namespace rf {
+
+namespace {
+    // Global wisdom management
+    std::mutex wisdomMutex;
+    bool wisdomLoaded = false;
+    
+    void loadWisdom() {
+        std::lock_guard<std::mutex> lock(wisdomMutex);
+        if (!wisdomLoaded) {
+            // Try to load wisdom from file for faster planning
+            const char* wisdomFile = "vhs-decode-fftw-wisdom.dat";
+            if (fftw_import_wisdom_from_filename(wisdomFile) != 0) {
+                std::cout << "[FFTW] Loaded wisdom from " << wisdomFile << std::endl;
+            }
+            wisdomLoaded = true;
+        }
+    }
+    
+    void saveWisdom() {
+        std::lock_guard<std::mutex> lock(wisdomMutex);
+        const char* wisdomFile = "vhs-decode-fftw-wisdom.dat";
+        if (fftw_export_wisdom_to_filename(wisdomFile) != 0) {
+            std::cout << "[FFTW] Saved wisdom to " << wisdomFile << std::endl;
+        }
+    }
+}
 
 // Pimpl implementation holding FFTW3 internals
 struct FFTWEngine::Impl {
@@ -18,6 +46,9 @@ struct FFTWEngine::Impl {
     size_t blockSize;
     
     Impl(size_t size) : blockSize(size) {
+        // Load FFTW wisdom if not already loaded
+        loadWisdom();
+        
         // Allocate aligned memory for SIMD optimization
         realInput = fftw_alloc_real(blockSize);
         complexOutput = fftw_alloc_complex(blockSize / 2 + 1);
@@ -29,26 +60,31 @@ struct FFTWEngine::Impl {
             throw std::runtime_error("Failed to allocate FFTW memory");
         }
         
-        // Create FFTW plans with FFTW_MEASURE for optimal performance
-        // This may take a few seconds but results in faster execution
+        // Create FFTW plans using PATIENT mode for first-time optimization
+        // If wisdom exists, this will be fast. Otherwise it will measure and save.
+        unsigned flags = FFTW_PATIENT | FFTW_DESTROY_INPUT;
+        
         forwardPlan = fftw_plan_dft_r2c_1d(
             static_cast<int>(blockSize),
             realInput,
             complexOutput,
-            FFTW_MEASURE
+            flags
         );
         
         inversePlan = fftw_plan_dft_c2r_1d(
             static_cast<int>(blockSize),
             complexInput,
             realOutput,
-            FFTW_MEASURE
+            flags
         );
         
         if (!forwardPlan || !inversePlan) {
             cleanup();
             throw std::runtime_error("Failed to create FFTW plans");
         }
+        
+        // Save wisdom after creating plans (only if new plans were measured)
+        saveWisdom();
     }
     
     ~Impl() {
