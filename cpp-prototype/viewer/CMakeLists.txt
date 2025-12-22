@@ -15,13 +15,27 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTOUIC ON)
 set(CMAKE_AUTORCC ON)
 
-# Find Qt6
-find_package(Qt6 REQUIRED COMPONENTS
+# Find Qt6 or Qt5
+find_package(Qt6 QUIET COMPONENTS
     Core
     Widgets
     OpenGL
     OpenGLWidgets
 )
+
+if(NOT Qt6_FOUND)
+    message(STATUS "Qt6 not found, trying Qt5...")
+    find_package(Qt5 REQUIRED COMPONENTS
+        Core
+        Widgets
+        OpenGL
+    )
+    set(QT_VERSION_MAJOR 5)
+    set(QT_LIBS Qt5::Core Qt5::Widgets Qt5::OpenGL)
+else()
+    set(QT_VERSION_MAJOR 6)
+    set(QT_LIBS Qt6::Core Qt6::Widgets Qt6::OpenGL Qt6::OpenGLWidgets)
+endif()
 
 # Source files
 set(SOURCES
@@ -32,6 +46,7 @@ set(SOURCES
     src/decoderworker.cpp
     src/framecache.cpp
     src/frameexporter.cpp
+    src/spectrogramwidget.cpp
 )
 
 # Header files
@@ -42,6 +57,7 @@ set(HEADERS
     include/decoderworker.h
     include/framecache.h
     include/frameexporter.h
+    include/spectrogramwidget.h
 )
 
 # UI files)
@@ -84,18 +100,19 @@ target_include_directories(vhs-rf-viewer PRIVATE
 
 # Link Qt libraries
 target_link_libraries(vhs-rf-viewer PRIVATE
-    Qt6::Core
-    Qt6::Widgets
-    Qt6::OpenGL
-    Qt6::OpenGLWidgets
+    ${QT_LIBS}
     Threads::Threads
-    opengl32  # Windows OpenGL library
 )
 
-# Link decoder libraries (from parent cpp-prototype)
-target_link_libraries(vhs-rf-viewer PRIVATE
-    vhsdecode-lib
-)
+# Platform-specific OpenGL library
+if(WIN32)
+    target_link_libraries(vhs-rf-viewer PRIVATE opengl32)
+else()
+    # Linux/macOS: Link against OpenGL
+    find_package(OpenGL REQUIRED)
+    target_link_libraries(vhs-rf-viewer PRIVATE OpenGL::GL)
+endif()
+
 
 target_include_directories(vhs-rf-viewer PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include

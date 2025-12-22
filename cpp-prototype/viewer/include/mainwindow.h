@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QMainWindow>
+#include <QDockWidget>
 #include <QString>
 #include <memory>
 
@@ -10,6 +11,7 @@ class MainWindow;
 
 class DecoderWorker;
 class FrameCache;
+class SpectrogramWidget;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -28,6 +30,7 @@ private slots:
     void onZoomIn();
     void onZoomOut();
     void onZoomReset();
+    void onToggleSpectrogram(bool checked);
     void onDemodParameterChanged();
     void onFrameDecoded(int frameNum, const QImage &image);
     void onDecodingProgress(int current, int total);
@@ -38,6 +41,7 @@ private:
     void decodeCurrentFrame();
     void startPlayback();
     void stopPlayback();
+    void setupSpectrogramDock();
     
     Ui::MainWindow *ui;
     
@@ -49,4 +53,8 @@ private:
     
     std::unique_ptr<DecoderWorker> decoderWorker_;
     std::unique_ptr<FrameCache> frameCache_;
+    
+    // Spectrogram dock widget
+    QDockWidget *spectrogramDock_;
+    SpectrogramWidget *spectrogramWidget_;
 };

@@ -2,6 +2,7 @@
 #include "ui_mainwindow.h"
 #include "decoderworker.h"
 #include "framecache.h"
+#include "spectrogramwidget.h"
 #include <QFileDialog>
 #include <QMessageBox>
 #include <QTimer>
@@ -14,11 +15,16 @@ MainWindow::MainWindow(QWidget *parent)
     , totalFrames_(0)
     , currentFrame_(0)
     , isPlaying_(false)
+    , spectrogramDock_(nullptr)
+    , spectrogramWidget_(nullptr)
 {
     ui->setupUi(this);
     
     // Create frame cache (512 MB)
     frameCache_ = std::make_unique<FrameCache>(512 * 1024 * 1024);
+    
+    // Setup spectrogram dock
+    setupSpectrogramDock();
     
     // Connect menu actions
     connect(ui->actionOpen, &QAction::triggered, this, &MainWindow::onOpenFile);
@@ -26,6 +32,7 @@ MainWindow::MainWindow(QWidget *parent)
     connect(ui->actionZoomIn, &QAction::triggered, this, &MainWindow::onZoomIn);
     connect(ui->actionZoomOut, &QAction::triggered, this, &MainWindow::onZoomOut);
     connect(ui->actionZoomReset, &QAction::triggered, this, &MainWindow::onZoomReset);
+    connect(ui->actionToggleSpectrogram, &QAction::toggled, this, &MainWindow::onToggleSpectrogram);
     
     // Connect transport controls
     connect(ui->playButton, &QPushButton::clicked, this, &MainWindow::onPlay);
@@ -326,4 +333,26 @@ void MainWindow::startPlayback() {
 
 void MainWindow::stopPlayback() {
     isPlaying_ = false;
+}
+
+void MainWindow::setupSpectrogramDock() {
+    // Create spectrogram widget
+    spectrogramWidget_ = new SpectrogramWidget(this);
+    
+    // Create dock widget
+    spectrogramDock_ = new QDockWidget("FM Spectrogram", this);
+    spectrogramDock_->setWidget(spectrogramWidget_);
+    spectrogramDock_->setAllowedAreas(Qt::BottomDockWidgetArea | Qt::RightDockWidgetArea);
+    
+    // Add to main window (bottom by default)
+    addDockWidget(Qt::BottomDockWidgetArea, spectrogramDock_);
+    
+    // Initially hidden
+    spectrogramDock_->hide();
+}
+
+void MainWindow::onToggleSpectrogram(bool checked) {
+    if (spectrogramDock_) {
+        spectrogramDock_->setVisible(checked);
+    }
 }
