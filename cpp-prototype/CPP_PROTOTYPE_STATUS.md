@@ -2,6 +2,22 @@
 
 ## Latest Changes (December 22, 2025)
 
+### Qt Viewer Uses Shared Decoder Pipeline ✓
+
+**Problem Identified:** The Qt RF viewer was still running in "mock" mode—it drew synthetic patterns instead of decoding real RF samples. Without integrating the new `DecoderPipeline`, the UI could not validate live captures or scrub tapes interactively.
+
+**Solution Implemented:**
+1. Replaced the mock `DecoderThread::decodeFrame` with a thin wrapper around `runDecoderPipeline`. Each job now sets `DecoderPipelineOptions` (format/system, seek offset, one-frame length, file-output disabled) and captures decoded fields through a lightweight observer.
+2. Added `FrameCaptureObserver` that listens for `onFieldDecoded`, stitches the two interlaced fields into a grayscale `QImage`, and hands it back to the UI thread.
+3. Extended `DecoderConfig` with basic tape metadata (`samplesPerFrame`, `tapeFormat`, `tvSystem`, `alignToFirstField`) plus helper logic to translate timeline frame numbers into RF byte offsets.
+4. Wired `MainWindow` to populate the new config fields whenever a file loads or demod params change, and taught the worker to restart its threads safely when options change.
+5. Fixed the viewer CMake target so `opengl32` only links on Windows (Linux/macOS builds were previously failing) and cleaned up the lone compiler warning in `TimelineWidget`.
+
+**Result:**
+- The viewer now renders real decoded frames directly from RF data, driven by the same pipeline as the CLI.
+- Decoder jobs respect seek offsets, reuse the CPU pipeline, and avoid writing temporary `.tbc` files when the UI only needs preview frames.
+- Linux builds succeed (`cmake --build cpp-prototype/build`), and the UI instantly benefits from all back-end decoding improvements.
+
 ### Decoder Pipeline API Extracted ✓
 
 **Problem Identified:** The CLI's `main.cpp` contained the entire decode pipeline, making it impossible to embed the decoder in the Qt viewer or any other host process.

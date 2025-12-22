@@ -131,6 +131,10 @@ void MainWindow::loadRFFile(const QString &filename) {
     config.ire0 = ui->ire0SpinBox->value();
     config.hzPerIre = ui->hzPerIreSpinBox->value();
     config.fileSize = fileSize_;
+    config.samplesPerFrame = samplesPerFrame;
+    config.tapeFormat = "VHS";
+    config.tvSystem = "PAL";
+    config.alignToFirstField = true;
     
     decoderWorker_ = std::make_unique<DecoderWorker>(config, 4);
     
@@ -214,6 +218,10 @@ void MainWindow::onDemodParameterChanged() {
     config.ire0 = ui->ire0SpinBox->value();
     config.hzPerIre = ui->hzPerIreSpinBox->value();
     config.fileSize = fileSize_;
+    config.samplesPerFrame = 1600000;
+    config.tapeFormat = "VHS";
+    config.tvSystem = "PAL";
+    config.alignToFirstField = true;
     
     decoderWorker_->updateConfig(config);
     

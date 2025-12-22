@@ -89,7 +89,6 @@ target_link_libraries(vhs-rf-viewer PRIVATE
     Qt6::OpenGL
     Qt6::OpenGLWidgets
     Threads::Threads
-    opengl32  # Windows OpenGL library
 )
 
 # Link decoder libraries (from parent cpp-prototype)
@@ -115,6 +114,8 @@ if(WIN32)
     target_compile_definitions(vhs-rf-viewer PRIVATE
         QT_ENABLE_HIGHDPI_SCALING
     )
+
+    target_link_libraries(vhs-rf-viewer PRIVATE opengl32)
 elseif(APPLE)
     # macOS: Create app bundle
     set_target_properties(vhs-rf-viewer PROPERTIES

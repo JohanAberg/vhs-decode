@@ -60,6 +60,18 @@ cmake --build . --parallel
 
 The viewer executable will be at `build/viewer/vhs-rf-viewer`.
 
+### Quick Launcher
+
+To configure, build, and launch the viewer in one step you can use the helper script from the repo root:
+
+```bash
+./scripts/run-viewer.sh --debug        # default
+./scripts/run-viewer.sh --release
+./scripts/run-viewer.sh --release -- --help  # pass extra args to the viewer
+```
+
+The script automatically sets `-DBUILD_VIEWER=ON`, chooses a per-configuration build directory, and runs the resulting `vhs-rf-viewer` binary. Use `--build-only` to compile without launching, or `--run-only` to launch an existing build.
+
 ## Usage
 
 ### Opening a File

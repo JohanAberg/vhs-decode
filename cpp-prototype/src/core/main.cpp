@@ -59,6 +59,7 @@ public:
 int main(int argc, char* argv[]) {
     std::string formatName = "VHS";
     std::string systemName = "NTSC";
+    bool seekSpecified = false;
     DecoderPipelineOptions options;
     ConsoleObserver observer;
 
@@ -78,6 +79,7 @@ int main(int argc, char* argv[]) {
             options.lengthFrames = std::stoi(argv[++i]);
         } else if (arg == "--seek" && i + 1 < argc) {
             options.seekOffset = std::stoull(argv[++i]);
+            seekSpecified = true;
         } else if (arg == "--gpu") {
             options.useGPU = true;
         } else if (arg == "--use-prototype-fft") {
@@ -110,6 +112,9 @@ int main(int argc, char* argv[]) {
     try {
         options.format = vhsdecode::formats::formatFromString(formatName);
         options.system = vhsdecode::formats::systemFromString(systemName);
+        if (seekSpecified) {
+            options.alignToFirstField = false;
+        }
 
         DecoderPipelineResult result = vhsdecode::core::runDecoderPipeline(options, &observer);
         std::cout << "\nSummary: " << result.writtenFields << " fields, "

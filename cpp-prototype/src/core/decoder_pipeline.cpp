@@ -7,6 +7,7 @@
 #include <iomanip>
 #include <algorithm>
 #include <cmath>
+#include <utility>
 #include <stdexcept>
 #include "vhsdecode/decoder_pipeline.hpp"
 #include "vhsdecode/types.hpp"
@@ -48,6 +49,15 @@ void notifyField(DecoderObserver* observer, const FieldMetadata& metadata) {
     }
 }
 
+void notifyFieldData(DecoderObserver* observer,
+                     VideoField&& composite,
+                     VideoField&& chroma,
+                     const FieldMetadata& metadata) {
+    if (observer) {
+        observer->onFieldDecoded(std::move(composite), std::move(chroma), metadata);
+    }
+}
+
 } // namespace
 
 DecoderPipelineResult runDecoderPipeline(const DecoderPipelineOptions& options,
@@ -55,8 +65,8 @@ DecoderPipelineResult runDecoderPipeline(const DecoderPipelineOptions& options,
     if (options.inputPath.empty()) {
         throw std::invalid_argument("Input path is required");
     }
-    if (options.outputBasename.empty()) {
-        throw std::invalid_argument("Output basename is required");
+    if (options.enableFileOutput && options.outputBasename.empty()) {
+        throw std::invalid_argument("Output basename is required when file output is enabled");
     }
 
     const TapeFormat format = options.format;
@@ -68,6 +78,7 @@ DecoderPipelineResult runDecoderPipeline(const DecoderPipelineOptions& options,
     bool usePrototypeFFT = options.usePrototypeFFT;
     const std::string inputFile = options.inputPath;
     const std::string outputFile = options.outputBasename;
+    const bool enableFileOutput = options.enableFileOutput;
     const bool alignToFirstField = options.alignToFirstField;
     
     // Create format implementation
@@ -85,7 +96,11 @@ DecoderPipelineResult runDecoderPipeline(const DecoderPipelineOptions& options,
     std::cout << "Seek:    " << seekOffset << " bytes\n";
     std::cout << "GPU:     " << (useGPU ? "Enabled" : "Disabled") << "\n";
     std::cout << "Input:   " << inputFile << "\n";
-    std::cout << "Output:  " << outputFile << "\n";
+    if (enableFileOutput) {
+        std::cout << "Output:  " << outputFile << "\n";
+    } else {
+        std::cout << "Output:  (disabled - API mode)\n";
+    }
     std::cout << "\n";
     
     // Display configuration
@@ -112,13 +127,18 @@ DecoderPipelineResult runDecoderPipeline(const DecoderPipelineOptions& options,
             std::cout << "  Sample count: " << reader.getSampleCount(1) << " samples (uint8)\n";
             std::cout << "  Memory-mapped: " << (reader.isMemoryMapped() ? "Yes" : "No") << "\n";
             
-            // Try creating TBC writer
-            std::cout << "\nInitializing TBC writer...\n";
-            io::TBCWriter writer(outputFile, true, true);
-            std::cout << "✓ TBC writer initialized\n";
-            std::cout << "  Video file: " << outputFile << ".tbc\n";
-            std::cout << "  Chroma file: " << outputFile << "_chroma.tbc\n";
-            std::cout << "  Metadata file: " << outputFile << ".tbc.json\n";
+            std::unique_ptr<io::TBCWriter> writer;
+            if (enableFileOutput) {
+                // Try creating TBC writer
+                std::cout << "\nInitializing TBC writer...\n";
+                writer = std::make_unique<io::TBCWriter>(outputFile, true, true);
+                std::cout << "✓ TBC writer initialized\n";
+                std::cout << "  Video file: " << outputFile << ".tbc\n";
+                std::cout << "  Chroma file: " << outputFile << "_chroma.tbc\n";
+                std::cout << "  Metadata file: " << outputFile << ".tbc.json\n";
+            } else {
+                std::cout << "\nSkipping TBC writer (file output disabled)\n";
+            }
             
             // Try creating FFT engine
             std::cout << "\nInitializing FFT engine...\n";
@@ -420,7 +440,9 @@ DecoderPipelineResult runDecoderPipeline(const DecoderPipelineOptions& options,
             videoParams.fieldHeight = config.system.fieldLines[1];
             videoParams.sampleRate = outputSampleRate;
             videoParams.numberOfSequentialFields = 0; // Will update as we write
-            writer.setVideoParameters(videoParams);
+            if (writer) {
+                writer->setVideoParameters(videoParams);
+            }
             
             // Calculate total blocks to process
             // Account for seek offset
@@ -1013,8 +1035,10 @@ DecoderPipelineResult runDecoderPipeline(const DecoderPipelineOptions& options,
                     }
                     
                     // Write video and chroma fields to TBC
-                    writer.writeVideoField(field, fieldCount);
-                    writer.writeChromaField(chromaField, fieldCount);
+                    if (writer) {
+                        writer->writeVideoField(field, fieldCount);
+                        writer->writeChromaField(chromaField, fieldCount);
+                    }
                     
                     // Add field metadata
                     FieldMetadata fieldMeta;
@@ -1036,8 +1060,11 @@ DecoderPipelineResult runDecoderPipeline(const DecoderPipelineOptions& options,
                     fieldMeta.syncConf = 100;
                     fieldMeta.fieldPhaseID = 1;
                     fieldMeta.decodeFaults = 0;
-                    writer.addFieldMetadata(fieldCount, fieldMeta);
+                    if (writer) {
+                        writer->addFieldMetadata(fieldCount, fieldMeta);
+                    }
                     notifyField(observer, fieldMeta);
+                    notifyFieldData(observer, std::move(field), std::move(chromaField), fieldMeta);
                     
                     fieldCount++;
                     accumulatedFieldSamples += samplesConsumed;
@@ -1075,10 +1102,10 @@ DecoderPipelineResult runDecoderPipeline(const DecoderPipelineOptions& options,
             decode_complete:
             // Update video parameters with final field count
             videoParams.numberOfSequentialFields = fieldCount;
-            writer.setVideoParameters(videoParams);
-            
-            // Close TBC writer
-            writer.close();
+            if (writer) {
+                writer->setVideoParameters(videoParams);
+                writer->close();
+            }
             
             std::cout << std::string(60, '=') << "\n";
             std::cout << "✓ DECODE COMPLETE!\n";
@@ -1086,10 +1113,12 @@ DecoderPipelineResult runDecoderPipeline(const DecoderPipelineOptions& options,
             std::cout << "  Blocks processed: " << totalBlocks << "\n";
             std::cout << "  Total samples: " << totalSamplesProcessed << "\n";
             std::cout << "  Fields written: " << fieldCount << "\n";
-            std::cout << "  Output files:\n";
-            std::cout << "    - " << outputFile << ".tbc\n";
-            std::cout << "    - " << outputFile << "_chroma.tbc\n";
-            std::cout << "    - " << outputFile << ".tbc.json\n";
+            if (enableFileOutput) {
+                std::cout << "  Output files:\n";
+                std::cout << "    - " << outputFile << ".tbc\n";
+                std::cout << "    - " << outputFile << "_chroma.tbc\n";
+                std::cout << "    - " << outputFile << ".tbc.json\n";
+            }
             
             std::cout << "\n" << std::string(60, '=') << "\n";
             std::cout << "Status: Phase 2 RF Processing Working! ✓✓✓\n";

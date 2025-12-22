@@ -17,6 +17,7 @@ struct DecoderPipelineOptions {
     bool useGPU = false;
     bool usePrototypeFFT = false;
     bool alignToFirstField = true;
+    bool enableFileOutput = true;
     std::string inputPath;
     std::string outputBasename;
 };
@@ -34,6 +35,9 @@ public:
     virtual void onLogMessage(const std::string& /*message*/) {}
     virtual void onProgress(size_t /*processedBlocks*/, size_t /*totalBlocks*/) {}
     virtual void onFieldWritten(const FieldMetadata& /*metadata*/) {}
+    virtual void onFieldDecoded(VideoField&& /*compositeField*/,
+                                VideoField&& /*chromaField*/,
+                                const FieldMetadata& /*metadata*/) {}
 };
 
 DecoderPipelineResult runDecoderPipeline(const DecoderPipelineOptions& options,
