@@ -223,6 +223,7 @@ DecoderWorker::DecoderWorker(const DecoderConfig &config, int numThreads, QObjec
         thread->start();
         threads_.push_back(std::move(thread));
     }
+
 }
 
 DecoderWorker::~DecoderWorker() {
@@ -252,8 +253,8 @@ void DecoderWorker::updateConfig(const DecoderConfig &config) {
     for (int i = 0; i < threadCount_; i++) {
         auto thread = std::make_unique<DecoderThread>(config_, this);
         
-        connect(thread.get(), &DecoderThread::frameDecoded,
-                this, &DecoderWorker::onFrameDecoded);
+    connect(thread.get(), &DecoderThread::frameDecoded,
+        this, &DecoderWorker::onFrameDecoded);
     connect(thread.get(), &DecoderThread::decodingError,
         [](int frame, const QString &error) {
             qWarning() << "Frame" << frame << "decode error:" << error;

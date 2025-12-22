@@ -23,6 +23,8 @@ find_package(Qt6 REQUIRED COMPONENTS
     OpenGLWidgets
 )
 
+# Cross-platform Qt deployment helpers (Windows/macOS only)
+
 # Source files
 set(SOURCES
     src/main.cpp
@@ -32,6 +34,11 @@ set(SOURCES
     src/decoderworker.cpp
     src/framecache.cpp
     src/frameexporter.cpp
+    src/histogramwidget.cpp
+    src/vectorscopewidget.cpp
+    src/colorsamplerwidget.cpp
+    src/scanlineplotwidget.cpp
+    resources.qrc
 )
 
 # Header files
@@ -42,6 +49,10 @@ set(HEADERS
     include/decoderworker.h
     include/framecache.h
     include/frameexporter.h
+    include/histogramwidget.h
+    include/vectorscopewidget.h
+    include/colorsamplerwidget.h
+    include/scanlineplotwidget.h
 )
 
 # UI files)
@@ -82,33 +93,30 @@ target_include_directories(vhs-rf-viewer PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../include
 )
 
-# Link Qt libraries
+# Link against decoder core + Qt dependencies
 target_link_libraries(vhs-rf-viewer PRIVATE
+    vhsdecode-lib
     Qt6::Core
+    Qt6::Gui
     Qt6::Widgets
     Qt6::OpenGL
     Qt6::OpenGLWidgets
     Threads::Threads
 )
 
-# Link decoder libraries (from parent cpp-prototype)
-target_link_libraries(vhs-rf-viewer PRIVATE
-    vhsdecode-lib
-)
-
-target_include_directories(vhs-rf-viewer PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include
-)
-# MOCK: Temporarily disabled while decoder integration is pending
-# target_link_libraries(vhs-rf-viewer PRIVATE
-#     vhsdecode-lib
-# )
-
 # Platform-specific settings
 if(WIN32)
     # Windows: Create GUI executable (not console)
     set_target_properties(vhs-rf-viewer PROPERTIES WIN32_EXECUTABLE TRUE)
+
+    # Embed application icon if .ico exists at configure time
+    set(VIEWER_ICO "${CMAKE_CURRENT_SOURCE_DIR}/../../assets/images/viewer/signal_color_v01.ico")
+    if(EXISTS "${VIEWER_ICO}")
+        target_sources(vhs-rf-viewer PRIVATE viewer_icon.rc)
+        message(STATUS "Embedding viewer icon: ${VIEWER_ICO}")
+    else()
+        message(WARNING "Viewer .ico not found at configure: ${VIEWER_ICO}. Generate via scripts/generate_viewer_icon.ps1 or use runtime Qt icon.")
+    endif()
     
     # Enable High DPI support on Windows
     target_compile_definitions(vhs-rf-viewer PRIVATE
@@ -144,6 +152,67 @@ install(TARGETS vhs-rf-viewer
     BUNDLE DESTINATION .
     RUNTIME DESTINATION bin
 )
+
+# Windows: run windeployqt to copy Qt DLLs and plugins next to the exe
+if(WIN32)
+    # Pre-link: ensure any running instance is terminated to avoid LNK1104 (file in use)
+    add_custom_command(TARGET vhs-rf-viewer PRE_LINK
+        COMMAND cmd /c "taskkill /IM vhs-rf-viewer.exe /F >NUL 2>&1 || ver >NUL"
+        COMMENT "Ensuring vhs-rf-viewer.exe is not running before link"
+        VERBATIM)
+
+    # Try to locate windeployqt from common vcpkg Qt6 locations
+    find_program(WINDEPLOYQT_EXECUTABLE NAMES windeployqt windeployqt6
+        HINTS
+            "${CMAKE_PREFIX_PATH}/../tools/Qt6/bin"
+            "${CMAKE_PREFIX_PATH}/../tools/qt6-base"
+            "${CMAKE_PREFIX_PATH}/../tools/qt6-base/bin"
+            "${CMAKE_PREFIX_PATH}/../tools/Qt6"
+        NO_DEFAULT_PATH
+    )
+
+    if(NOT WINDEPLOYQT_EXECUTABLE)
+        # Fallback to PATH or typical vcpkg layout
+        find_program(WINDEPLOYQT_EXECUTABLE NAMES windeployqt windeployqt6)
+    endif()
+
+    # Hardcoded relative path fallback for vcpkg layout within this repo
+    if(NOT WINDEPLOYQT_EXECUTABLE)
+        set(_VCPKG_WINDEPLOY "${CMAKE_CURRENT_SOURCE_DIR}/../../vcpkg_installed/x64-windows/tools/Qt6/bin/windeployqt.exe")
+        if(EXISTS "${_VCPKG_WINDEPLOY}")
+            set(WINDEPLOYQT_EXECUTABLE "${_VCPKG_WINDEPLOY}")
+        endif()
+    endif()
+
+    if(WINDEPLOYQT_EXECUTABLE)
+        # Skip windeployqt for Debug builds to avoid missing Qt debug DLLs in some vcpkg setups
+        # For multi-config generators, use a CMD guard on CONFIG
+        add_custom_command(TARGET vhs-rf-viewer POST_BUILD
+            COMMAND cmd /c "if /I \"$<CONFIG>\"==\"Debug\" (echo Skipping windeployqt for Debug) else (\"${WINDEPLOYQT_EXECUTABLE}\" \"$<TARGET_FILE:vhs-rf-viewer>\" --verbose 0)"
+            COMMENT "Deploying Qt runtime (skips in Debug)"
+            VERBATIM)
+    else()
+        message(WARNING "windeployqt not found; Qt runtime DLLs will not be auto-deployed.")
+    endif()
+endif()
+
+# macOS: run macdeployqt on the app bundle
+if(APPLE)
+    find_program(MACDEPLOYQT_EXECUTABLE macdeployqt)
+    if(MACDEPLOYQT_EXECUTABLE)
+        add_custom_command(TARGET vhs-rf-viewer POST_BUILD
+            COMMAND "${MACDEPLOYQT_EXECUTABLE}" "$<TARGET_FILE:vhs-rf-viewer>" -always-overwrite -verbose=0
+            COMMENT "Running macdeployqt to deploy Qt runtime"
+        )
+    else()
+        message(WARNING "macdeployqt not found; Qt runtime will not be auto-deployed.")
+    endif()
+endif()
+
+# Linux: typically use system Qt; packaging is handled by distro or CPack
+if(UNIX AND NOT APPLE)
+    message(STATUS "Qt runtime deployment on Linux is not performed automatically.")
+endif()
 
 # Cross-platform notes:
 # - Linux: Tested on Ubuntu 22.04+, Fedora 38+, Arch Linux
