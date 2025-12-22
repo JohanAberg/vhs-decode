@@ -117,6 +117,7 @@ void MainWindow::loadRFFile(const QString &filename) {
     // Update timeline
     ui->timelineWidget->setTotalFrames(totalFrames_);
     ui->timelineWidget->clearInOutPoints();
+    ui->timelineWidget->clearCachedFrames();
     
     // Reset to first frame
     currentFrame_ = 0;
@@ -203,6 +204,7 @@ void MainWindow::onDemodParameterChanged() {
     
     // Clear cache when parameters change
     frameCache_->clear();
+    ui->timelineWidget->clearCachedFrames();
     
     // Update decoder config
     DecoderConfig config;
@@ -222,6 +224,9 @@ void MainWindow::onDemodParameterChanged() {
 void MainWindow::onFrameDecoded(int frameNum, const QImage &image) {
     // Add to cache
     frameCache_->put(frameNum, image);
+    
+    // Update timeline with cached frames
+    ui->timelineWidget->addCachedFrame(frameNum);
     
     // Display if it's the current frame
     if (frameNum == currentFrame_) {

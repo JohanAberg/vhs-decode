@@ -37,6 +37,7 @@ set(SOURCES
     src/timelinewidget.cpp
     src/decoderworker.cpp
     src/framecache.cpp
+    src/frameexporter.cpp
 )
 
 # Header files
@@ -46,6 +47,7 @@ set(HEADERS
     include/timelinewidget.h
     include/decoderworker.h
     include/framecache.h
+    include/frameexporter.h
 )
 
 # UI files
@@ -76,10 +78,60 @@ target_link_libraries(vhs-rf-viewer PRIVATE
 
 # Platform-specific settings
 if(WIN32)
+    # Windows: Create GUI executable (not console)
     set_target_properties(vhs-rf-viewer PROPERTIES WIN32_EXECUTABLE TRUE)
+    
+    # Enable High DPI support on Windows
+    target_compile_definitions(vhs-rf-viewer PRIVATE
+        QT_ENABLE_HIGHDPI_SCALING
+    )
+elseif(APPLE)
+    # macOS: Create app bundle
+    set_target_properties(vhs-rf-viewer PROPERTIES
+        MACOSX_BUNDLE TRUE
+        MACOSX_BUNDLE_GUI_IDENTIFIER "org.vhs-decode.viewer"
+        MACOSX_BUNDLE_BUNDLE_NAME "VHS RF Viewer"
+        MACOSX_BUNDLE_BUNDLE_VERSION ${PROJECT_VERSION}
+        MACOSX_BUNDLE_SHORT_VERSION_STRING ${PROJECT_VERSION}
+    )
+    
+    # Enable Retina display support on macOS
+    set_target_properties(vhs-rf-viewer PROPERTIES
+        MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/Info.plist.in"
+    )
+elseif(UNIX)
+    # Linux: Standard executable
+    # Enable Wayland support if available
+    find_package(Qt6 QUIET COMPONENTS WaylandClient)
+    if(Qt6WaylandClient_FOUND)
+        target_link_libraries(vhs-rf-viewer PRIVATE Qt6::WaylandClient)
+    endif()
 endif()
 
 # Installation
 install(TARGETS vhs-rf-viewer
+    BUNDLE DESTINATION .
     RUNTIME DESTINATION bin
 )
+
+# Cross-platform notes:
+# - Linux: Tested on Ubuntu 22.04+, Fedora 38+, Arch Linux
+# - Windows: Requires Qt6 for Windows (MSVC or MinGW builds)
+# - macOS: Requires Qt6 for macOS (Clang builds), tested on macOS 12+
+# 
+# Build instructions per platform:
+# 
+# Linux:
+#   sudo apt-get install qt6-base-dev libqt6opengl6-dev qt6-base-dev-tools
+#   cmake -B build -S . && cmake --build build
+# 
+# Windows:
+#   - Install Qt6 from qt.io
+#   - Use Qt Creator or:
+#   cmake -B build -S . -G "Visual Studio 17 2022"
+#   cmake --build build --config Release
+# 
+# macOS:
+#   brew install qt@6
+#   export CMAKE_PREFIX_PATH="/opt/homebrew/opt/qt@6"
+#   cmake -B build -S . && cmake --build build

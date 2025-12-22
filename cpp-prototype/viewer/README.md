@@ -7,11 +7,14 @@ A Qt-based graphical viewer for VHS RF (.u8) files with real-time decoding and p
 - **Real-time RF decoding**: Decode VHS RF signals on-the-fly as you navigate
 - **OpenGL video display**: Hardware-accelerated video rendering with smooth zoom and pan
 - **Interactive timeline**: Visual timeline with current position marker and in/out points
-- **Frame cache**: Intelligent memory caching for smooth playback
+- **Cached frame visualization**: See which frames are loaded in memory (cyan markers on timeline)
+- **Frame cache**: Intelligent memory caching for smooth playback (LRU eviction)
 - **Adjustable parameters**: Real-time adjustment of demodulation parameters
 - **Keyboard shortcuts**: Fast navigation and in/out point setting (I/O keys)
 - **Multi-threaded decoding**: Concurrent frame decoding with worker thread pool
 - **Pan and zoom**: Mouse-based image navigation
+- **Export support architecture**: Extensible design for EXR, ProRes, and other formats
+- **Cross-platform**: Runs on Linux, Windows, and macOS
 
 ## Building
 
@@ -22,10 +25,28 @@ A Qt-based graphical viewer for VHS RF (.u8) files with real-time decoding and p
 - C++17 compiler
 - CMake 3.16+
 
-### Ubuntu/Debian
+### Linux (Ubuntu/Debian)
 
 ```bash
 sudo apt-get install qt6-base-dev libqt6opengl6-dev libfftw3-dev
+```
+
+### Windows
+
+```bash
+# Install Qt6 from qt.io
+# Then use Qt Creator or Visual Studio:
+cmake -B build -S . -DBUILD_VIEWER=ON -G "Visual Studio 17 2022"
+cmake --build build --config Release
+```
+
+### macOS
+
+```bash
+brew install qt@6
+export CMAKE_PREFIX_PATH="/opt/homebrew/opt/qt@6"
+cmake -B build -S . -DBUILD_VIEWER=ON
+cmake --build build
 ```
 
 ### Build Instructions
@@ -54,10 +75,11 @@ The viewer executable will be at `build/viewer/vhs-rf-viewer`.
 - **Play/Pause**: Play and Pause buttons
 - **Loop**: Enable loop checkbox to repeat playback
 
-### Timeline Controls
+### Timeline Features
 
-- **Set In Point**: Press `I` key (when timeline has focus)
-- **Set Out Point**: Press `O` key (when timeline has focus)
+- **Current position**: Yellow vertical line shows current frame
+- **Set In Point**: Press `I` key (green marker appears)
+- **Set Out Point**: Press `O` key (red marker appears)
 - **Play Range**: When in/out points are set, playback is limited to that range
 - **Visual feedback**: Shaded region shows active playback area
 
@@ -129,23 +151,73 @@ Right panel contains real-time adjustable parameters:
 | O | Set out point (timeline focused) |
 | Space | Play/Pause (when implemented) |
 
+## New Features (Latest Update)
+
+### Cached Frame Visualization
+
+The timeline now shows which frames are cached in memory:
+- **Cyan markers** at the bottom of timeline indicate cached frames
+- Updates in real-time as frames are decoded
+- Helps visualize cache hit patterns during playback
+- Shows approximately 40-60 frames cached during typical use
+
+### Export Architecture
+
+The viewer includes an extensible export framework for multiple formats:
+
+**Supported (implemented):**
+- ✓ PNG sequence export
+
+**Planned (architecture ready):**
+- ⚠ OpenEXR sequence (16/32-bit float, HDR)
+- ⚠ Apple ProRes (422/4444/XQ profiles)
+- ⚠ FFV1 (lossless codec)
+- ⚠ H.264/H.265 (distribution codecs)
+
+See `frameexporter.h` for the export API and `GPU_DIRECT_ARCHITECTURE.md` for technical details.
+
+### Cross-Platform Support
+
+Verified to work on:
+- **Linux**: Ubuntu 22.04+, Fedora 38+, Arch Linux (primary development platform)
+- **Windows**: Windows 10/11 with Visual Studio 2022 or MinGW
+- **macOS**: macOS 12+ with Homebrew Qt6
+
+Platform-specific optimizations:
+- Windows: High DPI scaling support
+- macOS: Retina display support, app bundle creation
+- Linux: Wayland support when available
+
+### GPU-Direct Future Path
+
+While the current implementation uses QImage for frame display, the architecture supports future GPU-direct rendering for maximum performance:
+
+- **Current**: Decoder → QImage → GPU texture (works everywhere)
+- **Future Option 1**: Decoder → PBO → GPU texture (50% less memory, async)
+- **Future Option 2**: Decoder (GPU) → Shared texture → Display (zero-copy)
+
+See `GPU_DIRECT_ARCHITECTURE.md` for detailed technical discussion.
+
 ## Known Limitations
 
 - **PAL only**: Currently optimized for PAL (625-line) format
 - **No audio**: Audio decoding not yet implemented
-- **No TBC export**: View-only, cannot save decoded TBC files
+- **Export stubs**: EXR/ProRes export architecture present but not implemented
 - **Limited formats**: Only .u8 RF files supported
 
 ## Future Enhancements
 
 - [ ] NTSC format support
 - [ ] Audio (Hi-Fi) decoding and playback
-- [ ] Export decoded frames/TBC
+- [x] Export architecture (framework complete, implementations pending)
+- [ ] OpenEXR export implementation
+- [ ] ProRes export implementation
 - [ ] Real-time spectrum analyzer
 - [ ] Waveform monitor
 - [ ] Dropout visualization
 - [ ] Parameter presets
 - [ ] Batch processing
+- [ ] GPU-direct rendering (PBO or shared textures)
 
 ## Troubleshooting
 

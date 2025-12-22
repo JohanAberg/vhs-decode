@@ -72,6 +72,16 @@ bool FrameCache::contains(int frameNumber) const {
     return cache_.find(frameNumber) != cache_.end();
 }
 
+QSet<int> FrameCache::getCachedFrameNumbers() const {
+    QMutexLocker locker(&mutex_);
+    
+    QSet<int> frames;
+    for (const auto &entry : cache_) {
+        frames.insert(entry.first);
+    }
+    return frames;
+}
+
 void FrameCache::clear() {
     QMutexLocker locker(&mutex_);
     

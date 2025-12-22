@@ -2,6 +2,7 @@
 
 #include <QImage>
 #include <QMutex>
+#include <QSet>
 #include <unordered_map>
 #include <list>
 #include <memory>
@@ -32,6 +33,9 @@ public:
     
     // Check if frame is in cache
     bool contains(int frameNumber) const;
+    
+    // Get all cached frame numbers
+    QSet<int> getCachedFrameNumbers() const;
     
     // Clear all cached frames
     void clear();

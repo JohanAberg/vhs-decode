@@ -3,6 +3,7 @@
 #include <QWidget>
 #include <QPainter>
 #include <QMouseEvent>
+#include <QSet>
 
 class TimelineWidget : public QWidget {
     Q_OBJECT
@@ -16,6 +17,12 @@ public:
     void setInPoint(int frame);
     void setOutPoint(int frame);
     void clearInOutPoints();
+    
+    // Cached frame visualization
+    void setCachedFrames(const QSet<int> &frames);
+    void addCachedFrame(int frame);
+    void removeCachedFrame(int frame);
+    void clearCachedFrames();
     
     int getTotalFrames() const { return totalFrames_; }
     int getCurrentFrame() const { return currentFrame_; }
@@ -41,14 +48,17 @@ private:
     void drawTimeline(QPainter &painter);
     void drawCurrentPosition(QPainter &painter);
     void drawInOutPoints(QPainter &painter);
+    void drawCachedFrames(QPainter &painter);
     
     int totalFrames_;
     int currentFrame_;
     int inPoint_;
     int outPoint_;
+    QSet<int> cachedFrames_;
     
     bool isDragging_;
     
     static constexpr int MARGIN = 10;
     static constexpr int TIMELINE_HEIGHT = 40;
+    static constexpr int CACHE_MARKER_HEIGHT = 4;
 };

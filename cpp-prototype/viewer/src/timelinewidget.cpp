@@ -56,6 +56,26 @@ void TimelineWidget::clearInOutPoints() {
     update();
 }
 
+void TimelineWidget::setCachedFrames(const QSet<int> &frames) {
+    cachedFrames_ = frames;
+    update();
+}
+
+void TimelineWidget::addCachedFrame(int frame) {
+    cachedFrames_.insert(frame);
+    update();
+}
+
+void TimelineWidget::removeCachedFrame(int frame) {
+    cachedFrames_.remove(frame);
+    update();
+}
+
+void TimelineWidget::clearCachedFrames() {
+    cachedFrames_.clear();
+    update();
+}
+
 void TimelineWidget::paintEvent(QPaintEvent *event) {
     Q_UNUSED(event);
     
@@ -63,6 +83,7 @@ void TimelineWidget::paintEvent(QPaintEvent *event) {
     painter.setRenderHint(QPainter::Antialiasing);
     
     drawTimeline(painter);
+    drawCachedFrames(painter);
     drawInOutPoints(painter);
     drawCurrentPosition(painter);
 }
@@ -90,6 +111,29 @@ void TimelineWidget::drawTimeline(QPainter &painter) {
         int x = xFromFrame(i);
         int markerHeight = (i % (markerInterval * 5) == 0) ? 10 : 5;
         painter.drawLine(x, timelineTop, x, timelineTop + markerHeight);
+    }
+}
+
+void TimelineWidget::drawCachedFrames(QPainter &painter) {
+    if (totalFrames_ <= 0 || cachedFrames_.isEmpty()) {
+        return;
+    }
+    
+    int timelineWidth = width() - 2 * MARGIN;
+    int timelineTop = (height() - TIMELINE_HEIGHT) / 2;
+    int timelineBottom = timelineTop + TIMELINE_HEIGHT;
+    
+    // Draw small markers at bottom of timeline for cached frames
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(QColor(100, 200, 255)); // Cyan/blue color for cache markers
+    
+    for (int frame : cachedFrames_) {
+        if (frame >= 0 && frame < totalFrames_) {
+            int x = xFromFrame(frame);
+            // Draw small rectangle at bottom of timeline
+            painter.drawRect(x - 1, timelineBottom - CACHE_MARKER_HEIGHT, 
+                           2, CACHE_MARKER_HEIGHT);
+        }
     }
 }
 
