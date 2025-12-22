@@ -1,0 +1,96 @@
+## FM Spectrogram Widget ASCII Art Mockup
+
+```
+┌────────────────────────────────────────────────────────────────────────────────┐
+│ VHS RF Viewer                                                        [_][□][×] │
+├────────────────────────────────────────────────────────────────────────────────┤
+│ File    View                                                                   │
+│  ├─ Open RF File...  (Ctrl+O)                                                 │
+│  ├─ Exit             (Ctrl+Q)                                                 │
+│  └─ Show Spectrogram (Ctrl+S) ✓                                              │
+├────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                │
+│  ┌──────────────────────────────────────────┐  ┌──────────────────────────┐  │
+│  │                                          │  │  Demodulation Parameters │  │
+│  │         Video Display Area               │  │  RF Bandpass Low: 1.3    │  │
+│  │      (Decoded VHS frames)                │  │  RF Bandpass High: 5.8   │  │
+│  │                                          │  │  IRE 0: 4.1              │  │
+│  │                                          │  │  Hz per IRE: 7000        │  │
+│  │                                          │  └──────────────────────────┘  │
+│  │                                          │                                 │
+│  └──────────────────────────────────────────┘                                 │
+│                                                                                │
+├════════════════════════════════════════════════════════════════════════════════┤
+│ ┌──────────────────────────────────────────────────────────────────────────┐  │
+│ │ FM Spectrogram                                                  [−][▢][×]│  │
+│ ├──────────────────────────────────────────────────────────────────────────┤  │
+│ │ 5.8 MHz ┌────────────────────────────────────────────────────────┐      │  │
+│ │         │░░░░░░██████░░░░░░██████░░░░░░██████░░░░░░██████░░░░░░│      │  │
+│ │         │░░░░████████████░░████████████░████████████░████████░░│      │  │
+│ │ 4.1 MHz │███████████████████████████████████████████████████████│      │  │
+│ │         │███████████████████████████████████████████████████████│      │  │
+│ │ 1.3 MHz │░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░│      │  │
+│ │         └────────────────────────────────────────────────────────┘      │  │
+│ │                                                        1 second           │  │
+│ ├──────────────────────────────────────────────────────────────────────────┤  │
+│ │ Spectrogram Controls                                                     │  │
+│ │ Color Map: [Viridis ▼]                                                  │  │
+│ │ Min Freq (MHz): ├─────────●──────────┤ 1.3                              │  │
+│ │ Max Freq (MHz): ├──────────────●─────┤ 5.8                              │  │
+│ │ Contrast:       ├──────────●─────────┤                                  │  │
+│ │ Brightness:     ├──────────●─────────┤                                  │  │
+│ │ Compute time: 15 ms | Windows: 78 | Buffer: 80000 samples              │  │
+│ └──────────────────────────────────────────────────────────────────────────┘  │
+├────────────────────────────────────────────────────────────────────────────────┤
+│ [▶] [∥] [<] [>]  Frame: 42 / 1000    [Loop ✓]                   Cache: 12.5MB │
+└────────────────────────────────────────────────────────────────────────────────┘
+
+Legend:
+  ████ = High signal power (FM carrier)
+  ░░░░ = Low signal power (noise floor)
+  
+The spectrogram shows:
+  - Strong carrier at 4.1 MHz (center frequency for video black level)
+  - FM deviation ±1 MHz contains video information
+  - Real-time display updates as frames are decoded
+  - 1-second moving window shows temporal changes
+```
+
+## Color Map Examples
+
+### Viridis (Default)
+```
+Low  ████████████████████████████████████  High
+     Purple → Blue → Green → Yellow
+```
+
+### Jet
+```
+Low  ████████████████████████████████████  High
+     Blue → Cyan → Green → Yellow → Red
+```
+
+### Hot
+```
+Low  ████████████████████████████████████  High
+     Black → Red → Orange → Yellow → White
+```
+
+### Grayscale
+```
+Low  ████████████████████████████████████  High
+     Black → Gray → White
+```
+
+## Widget Interaction
+
+1. **Docking**: Drag the spectrogram title bar to dock it to different edges
+   - Bottom (default) - Full width below video
+   - Right - Vertical display beside video
+   - Float - Independent window
+
+2. **Visibility**: Toggle with View menu or Ctrl+S
+
+3. **Real-time Updates**: Automatically refreshes every 50ms
+
+4. **Performance**: If compute time > 50ms, frames are dropped (non-blocking)
