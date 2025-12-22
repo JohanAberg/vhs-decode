@@ -1,4 +1,4 @@
-#ifdef HAVE_OPENCL
+#if defined(HAVE_OPENCL) && defined(HAVE_CLFFT)
 
 #include "vhsdecode/rf_processor_gpu.hpp"
 #include <iostream>
@@ -227,4 +227,4 @@ RFProcessorGPU::Result RFProcessorGPU::processBlockCPU(const RealArray& rfData) 
 } // namespace rf
 } // namespace vhsdecode
 
-#endif // HAVE_OPENCL
+#endif // defined(HAVE_OPENCL) && defined(HAVE_CLFFT)

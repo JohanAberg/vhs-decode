@@ -266,7 +266,7 @@ DecoderPipelineResult runDecoderPipeline(const DecoderPipelineOptions& options,
             rfConfig.useGPU = useGPU;
             
             // Create RF processor (GPU or CPU based on useGPU flag)
-#ifdef HAVE_OPENCL
+#if defined(HAVE_OPENCL) && defined(HAVE_CLFFT)
             std::unique_ptr<rf::RFProcessorGPU> rfProcessorGPU;
             std::unique_ptr<rf::RFProcessor> rfProcessorCPU;
             
@@ -296,6 +296,9 @@ DecoderPipelineResult runDecoderPipeline(const DecoderPipelineOptions& options,
             
             auto& filterBank = rfProcessorGPU ? rfProcessorGPU->getFilterBank() : rfProcessorCPU->getFilterBank();
 #else
+            if (useGPU) {
+                std::cout << "  ⚠ GPU requested but OpenCL/clFFT support is unavailable; falling back to CPU.\n";
+            }
             rf::RFProcessor rfProcessor(rfConfig);
             
             auto processRFBlock = [&](const std::vector<uint8_t>& block) -> rf::RFProcessor::Result {

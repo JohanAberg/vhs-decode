@@ -1,5 +1,7 @@
 #pragma once
 
+#if defined(HAVE_OPENCL) && defined(HAVE_CLFFT)
+
 #include "vhsdecode/rf_processor.hpp"
 #include "vhsdecode/opencl_context.hpp"
 #include "vhsdecode/clfft_engine.hpp"
@@ -102,3 +104,5 @@ private:
 
 } // namespace rf
 } // namespace vhsdecode
+
+#endif // defined(HAVE_OPENCL) && defined(HAVE_CLFFT)
