@@ -336,6 +336,34 @@ Focus areas:
 - Optimizing performance
 - Adding tests
 
+## Qt RF Viewer (NEW! 🎨)
+
+A complete Qt6-based graphical viewer for VHS RF files with real-time decoding and playback!
+
+### Features
+- ✅ OpenGL video display with zoom and pan
+- ✅ Interactive timeline with in/out points (I/O keys)
+- ✅ Multi-threaded decoding (4 worker threads)
+- ✅ Smart frame cache (512 MB LRU cache)
+- ✅ Real-time parameter controls
+- ✅ Playback with loop support
+- ✅ Professional Qt6 UI with .ui files
+
+### Quick Start
+```bash
+# Install Qt6
+sudo apt-get install qt6-base-dev libqt6opengl6-dev qt6-base-dev-tools
+
+# Build
+cd viewer
+./build.sh
+
+# Run
+./build/vhs-rf-viewer
+```
+
+See [viewer/README.md](viewer/README.md) for detailed documentation.
+
 ## License
 
 Same as main VHS-Decode project (GPL).
@@ -345,4 +373,5 @@ Same as main VHS-Decode project (GPL).
 - [Full Rewrite Plan](../CPP_OPENCL_REWRITE_PLAN.md)
 - [Executive Summary](../CPP_REWRITE_SUMMARY.md)
 - [Documentation Index](../CPP_REWRITE_INDEX.md)
+- [Qt Viewer Documentation](viewer/README.md)
 - [Main VHS-Decode Repository](https://github.com/oyvindln/vhs-decode)
