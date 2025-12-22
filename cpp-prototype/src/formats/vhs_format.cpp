@@ -26,6 +26,10 @@ SystemParams VHSFormat::getSystemParams(TVSystem system) const {
             params.linePeriodUs = 1000000.0 / (params.fscMHz * 227.5);
             params.ire0 = 8100000;
             params.hzPerIRE = 1700000.0 / 140.0;
+            params.colorBurstStartUs = 5.3;
+            params.colorBurstEndUs = 7.6;
+            params.burstAbsRef = 4416.0;
+            params.enableComb = true;
             break;
             
         case TVSystem::PAL:
@@ -38,6 +42,10 @@ SystemParams VHSFormat::getSystemParams(TVSystem system) const {
             params.linePeriodUs = 64.0;
             params.ire0 = 7100000;
             params.hzPerIRE = 800000.0 / 100.0;
+            params.colorBurstStartUs = 5.6;
+            params.colorBurstEndUs = 7.85;
+            params.burstAbsRef = 5000.0;
+            params.enableComb = true;
             break;
             
         case TVSystem::PAL_M:
@@ -49,6 +57,10 @@ SystemParams VHSFormat::getSystemParams(TVSystem system) const {
             params.linePeriodUs = 63.556;
             params.ire0 = 8100000;
             params.hzPerIRE = 1700000.0 / 140.0;
+            params.colorBurstStartUs = 5.3;
+            params.colorBurstEndUs = 7.6;
+            params.burstAbsRef = 4416.0;
+            params.enableComb = true;
             break;
             
         default:

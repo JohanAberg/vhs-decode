@@ -44,6 +44,24 @@ struct SystemParams {
     double linePeriodUs;
     double ire0;
     double hzPerIRE;
+    double colorBurstStartUs;
+    double colorBurstEndUs;
+    double burstAbsRef;
+    bool enableComb;
+
+    SystemParams()
+        : system(TVSystem::NTSC)
+        , fscMHz(0.0)
+        , frameLines(0)
+        , fieldLines{0, 0}
+        , linePeriodUs(0.0)
+        , ire0(0.0)
+        , hzPerIRE(0.0)
+        , colorBurstStartUs(0.0)
+        , colorBurstEndUs(0.0)
+        , burstAbsRef(0.0)
+        , enableComb(true)
+    {}
 };
 
 // Format parameters

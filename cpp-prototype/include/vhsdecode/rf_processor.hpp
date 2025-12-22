@@ -42,6 +42,7 @@ public:
         ComplexArray analyticSignal;  // Complex analytic signal
         RealArray envelope;            // Signal envelope
         RealArray filtered;            // Filtered real signal
+        RealArray chroma;              // Extracted chroma signal (color-under)
     };
     
     /**

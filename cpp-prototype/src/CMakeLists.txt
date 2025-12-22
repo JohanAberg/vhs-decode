@@ -12,6 +12,7 @@ set(LIB_SOURCES
     sync/sync_detector.cpp
     sync/vsync_detector.cpp
     tbc/tbc_scaler.cpp
+    chroma/chroma_processor.cpp
     video/dropout_corrector.cpp
     video/tbc_corrector.cpp
     core/block_processor.cpp

@@ -18,6 +18,7 @@
 #include "vhsdecode/sync_detector.hpp"
 #include "vhsdecode/vsync_detector.hpp"
 #include "vhsdecode/tbc_scaler.hpp"
+#include "vhsdecode/chroma_processor.hpp"
 #include "vhsdecode/iir_filter.hpp"
 #include "formats/format_base.hpp"
 #include "formats/vhs_format.hpp"
@@ -403,6 +404,53 @@ int main(int argc, char* argv[]) {
             tbcConfig.outputSampleRateMHz = 4.0 * fscMHz;
             tbc::TBCScaler tbcScaler(tbcConfig);
             
+            // Setup Chroma Processor
+            chroma::ChromaProcessor::Config chromaConfig;
+            // Heterodyne frequency = Subcarrier + Color-under frequency
+            double colorUnderFreqMHz = formatImpl->getChromaCarrierMHz(config.system.system);
+            chromaConfig.heterodyneFreq = (fscMHz + colorUnderFreqMHz) * 1e6; // Convert to Hz
+            chromaConfig.sampleRate = outputSampleRate;
+            chromaConfig.lineLength = outputLineLen;
+            chromaConfig.chromaRotation = (config.system.system == TVSystem::PAL)
+                                               ? std::array<int, 2>{0, -1}
+                                               : std::array<int, 2>{-1, 1};
+            chromaConfig.startingPhase = 0;
+            chromaConfig.enableComb = false; // TEMP: disable comb for debugging
+            chromaConfig.combDelay = (config.system.system == TVSystem::PAL) ? 2 : 1;
+            chromaConfig.combStartLine = 16;
+            chromaConfig.accStartLine = 16;
+
+            const double burstStartUs = config.system.colorBurstStartUs;
+            const double burstEndUs = config.system.colorBurstEndUs;
+            const int burstStartSampleBase = static_cast<int>(std::floor(burstStartUs * outputSampleRate / 1e6));
+            const int burstEndSampleBase = static_cast<int>(std::ceil(burstEndUs * outputSampleRate / 1e6));
+            const int burstMarginBefore = 5;
+            const int burstMarginAfter = 10;
+            chromaConfig.burstStartSample = std::max(0, burstStartSampleBase - burstMarginBefore);
+            chromaConfig.burstEndSample = std::max(chromaConfig.burstStartSample + 1, burstEndSampleBase + burstMarginAfter);
+            chromaConfig.burstAbsRef = config.system.burstAbsRef;
+            
+            // SOS coefficients for FChromaFinal (Bandpass 3-5.5MHz at 17.73MHz)
+            // TODO: Calculate these dynamically based on sample rate
+            if (config.system.system == TVSystem::PAL) {
+                chromaConfig.filterSOS = {
+                    { 0.11866232954336972, 0.23732465908673944, 0.11866232954336972, 1.0, 0.4116377721210873, 0.5322552036521444 },
+                    { 1.0, -2.0, 1.0, 1.0, -0.6143713850251699, 0.5492680437912786 }
+                };
+            } else {
+                // NTSC coefficients (placeholder - need to calculate)
+                // For now use PAL ones, it might work poorly but better than nothing
+                chromaConfig.filterSOS = {
+                    { 0.11866232954336972, 0.23732465908673944, 0.11866232954336972, 1.0, 0.4116377721210873, 0.5322552036521444 },
+                    { 1.0, -2.0, 1.0, 1.0, -0.6143713850251699, 0.5492680437912786 }
+                };
+            }
+            
+            chroma::ChromaProcessor chromaProcessor(chromaConfig);
+            std::cout << "Chroma processor initialized:\n";
+            std::cout << "  Heterodyne freq: " << chromaConfig.heterodyneFreq / 1e6 << " MHz\n";
+            std::cout << "  Sample rate: " << chromaConfig.sampleRate / 1e6 << " MHz\n";
+
             // Setup video parameters for metadata (output format)
             VideoParameters videoParams;
             videoParams.system = systemToString(config.system.system);
@@ -446,9 +494,11 @@ int main(int argc, char* argv[]) {
             std::vector<uint16_t> videoBuffer;
             std::vector<uint16_t> chromaBuffer;
             std::vector<float> videoFloatBuffer;  // For sync detection (float domain)
+            std::vector<float> chromaFloatBuffer; // For TBC scaling (float domain)
             videoBuffer.reserve(samplesPerFieldMax * 2);
             chromaBuffer.reserve(samplesPerFieldMax * 2);
             videoFloatBuffer.reserve(samplesPerFieldMax * 2);
+            chromaFloatBuffer.reserve(samplesPerFieldMax * 2);
             size_t fieldCount = 0;
             size_t accumulatedFieldSamples = 0;    // Track per-field start positions for metadata
             size_t totalSamplesProcessed = 0;
@@ -711,11 +761,18 @@ int main(int argc, char* argv[]) {
                 }
                 
                 // Convert chroma to 16-bit and add to buffer
-                for (size_t i = 0; i < fmResult.chroma.size(); ++i) {
-                    // Chroma uses same frequency-to-IRE scaling for now
-                    float freqHz = fmResult.chroma[i];
-                    float ire = (freqHz - ire0Hz) / hzPerIre;
-                    float digital = (ire - vsyncIre) * outScale + outputZero;
+                // Chroma is extracted by RFProcessor (color-under signal)
+                // It is an amplitude signal centered at 0.
+                // For TBC processing (heterodyning), we want the raw float signal centered at 0.
+                // For display/debug (if we were writing raw), we'd want offset binary.
+                for (size_t i = 0; i < rfResult.chroma.size(); ++i) {
+                    float val = rfResult.chroma[i];
+                    
+                    // Store raw float for processing (centered at 0)
+                    chromaFloatBuffer.push_back(val);
+                    
+                    // Store offset binary for uint16 buffer (used for size tracking/debug)
+                    float digital = val + 32768.0f;
                     digital = std::max(0.0f, std::min(65535.0f, digital));
                     chromaBuffer.push_back(static_cast<uint16_t>(digital));
                 }
@@ -734,6 +791,9 @@ int main(int argc, char* argv[]) {
                     
                     toSkip = std::min(samplesSkipped, videoFloatBuffer.size());
                     videoFloatBuffer.erase(videoFloatBuffer.begin(), videoFloatBuffer.begin() + toSkip);
+
+                    toSkip = std::min(samplesSkipped, chromaFloatBuffer.size());
+                    chromaFloatBuffer.erase(chromaFloatBuffer.begin(), chromaFloatBuffer.begin() + toSkip);
                     
                     needToSkipSamples = false;  // Only skip once
                     std::cout << " (skipped " << samplesSkipped << " samples to field boundary) ";
@@ -743,7 +803,7 @@ int main(int argc, char* argv[]) {
                 while (true) {
                     size_t samplesNeeded = samplesPerLine * config.system.fieldLines[fieldCount % 2];
                     if (videoBuffer.size() < samplesNeeded || chromaBuffer.size() < samplesNeeded ||
-                        videoFloatBuffer.size() < samplesNeeded) {
+                        videoFloatBuffer.size() < samplesNeeded || chromaFloatBuffer.size() < samplesNeeded) {
                         break;
                     }
                     
@@ -890,25 +950,119 @@ int main(int argc, char* argv[]) {
                     }
                     
                     // Fill remaining lines if sync didn't find enough
-                    while (field.size() < static_cast<size_t>(config.system.fieldLines[fieldCount % 2])) {
+                    // Must pad to videoParams.fieldHeight (max field lines) for TBC format consistency
+                    while (field.size() < videoParams.fieldHeight) {
                         VideoLine videoLine(outputLineLen, 16384);  // Blanking level
                         field.push_back(videoLine);
                     }
                     
                     // Extract chroma field (same line positions, scaled to output rate)
-                    // For now, just use mid-level since chroma processing isn't implemented
+                    // Create RealArray from float buffer for scaling
+                    RealArray chromaForScaling(chromaFloatBuffer.begin(), 
+                                              chromaFloatBuffer.begin() + std::min(chromaFloatBuffer.size(), samplesNeeded + inputLineLen));
+                    
+                    // Scale the chroma field using TBC scaler
+                    auto scaledChromaLines = tbcScaler.scaleField(chromaForScaling, lineStarts, numLines);
+
+                    // Apply heterodyning (up-conversion) and filtering
+                    // Determine track phase: Track 1 (Even fields) -> 0, Track 2 (Odd fields) -> 1
+                    // Note: fieldCount is 0-based index of processed fields
+                    // If firstFieldIsOdd is true: field 0 is Odd (Track 2), field 1 is Even (Track 1)
+                    // If firstFieldIsOdd is false: field 0 is Even (Track 1), field 1 is Odd (Track 2)
+                    
+                    int trackPhase = 0;
+                    bool isOddField = firstFieldIsOdd ? (fieldCount % 2 == 0) : (fieldCount % 2 != 0);
+                    if (isOddField) {
+                        trackPhase = 1; // Track 2
+                    }
+                    
+                    auto processedChromaLines = chromaProcessor.processField(scaledChromaLines, static_cast<int>(fieldCount), trackPhase);
+
+                    static bool loggedFinalChroma = false;
+                    if (!loggedFinalChroma && processedChromaLines.size() > static_cast<size_t>(chromaConfig.accStartLine)) {
+                        const auto& line = processedChromaLines[static_cast<size_t>(chromaConfig.accStartLine)];
+                        int burstStart = std::max(0, chromaConfig.burstStartSample);
+                        int burstEnd = std::min(static_cast<int>(line.size()), chromaConfig.burstEndSample);
+                        std::cout << std::fixed << std::setprecision(2);
+                        std::cout << "[Main] Final chroma line " << chromaConfig.accStartLine << " samples (ACC applied):";
+                        for (int idx = burstStart; idx < std::min(burstEnd, burstStart + 5); ++idx) {
+                            std::cout << ' ' << line[static_cast<std::size_t>(idx)];
+                        }
+                        double sumSquares = 0.0;
+                        for (int idx = burstStart; idx < burstEnd; ++idx) {
+                            double value = static_cast<double>(line[static_cast<std::size_t>(idx)]);
+                            sumSquares += value * value;
+                        }
+                        int burstRange = std::max(1, burstEnd - burstStart);
+                        double rms = std::sqrt(sumSquares / static_cast<double>(burstRange));
+                        std::cout << " | RMS=" << rms << '\n';
+                        loggedFinalChroma = true;
+                    }
+
                     VideoField chromaField;
-                    for (size_t lineIdx = 0; lineIdx < numLines; ++lineIdx) {
-                        VideoLine chromaLine(outputLineLen, 32768);  // Mid-level for chroma
+                    for (size_t lineIdx = 0; lineIdx < processedChromaLines.size(); ++lineIdx) {
+                        VideoLine chromaLine(outputLineLen);
+                        const auto& scaledLine = processedChromaLines[lineIdx];
+                        
+                        for (size_t s = 0; s < outputLineLen && s < scaledLine.size(); ++s) {
+                            float value = scaledLine[s];
+                            // Add offset (128 or 32768) to center the signal?
+                            // Python chroma is signed float centered at 0.
+                            // TBC format expects uint16.
+                            // Usually centered at 32768.
+                            // But wait, scaledLine comes from TBCScaler which interpolates input values.
+                            // Input values were from fmResult.chroma which is analytic signal magnitude?
+                            // No, fmResult.chroma is float.
+                            // Let's check FMDemodulator.
+                            
+                            // FMDemodulator returns `chroma` as `RealArray`.
+                            // In `demodulate`:
+                            // chroma = analyticSignal * exp(-j * 2pi * freq * t) (downconversion)
+                            // It returns the complex magnitude? No, it returns the real part?
+                            // Wait, `FMDemodulator` in C++ prototype:
+                            // It doesn't do chroma extraction yet!
+                            // Wait, I implemented `RFProcessor` which does filtering.
+                            // But `FMDemodulator` is used for Luma.
+                            // Where does `chromaFloatBuffer` come from?
+                            
+                            // In main.cpp:
+                            // auto rfResult = rfProcessor.processBlock(rfBlock.data);
+                            // auto fmResult = fmDemod.demodulate(rfResult.analyticSignal);
+                            // ...
+                            // chromaFloatBuffer.insert(..., fmResult.chroma.begin(), ...);
+                            
+                            // Let's check `FMDemodulator::demodulate`.
+                            
+                            value += 32768.0f; // Center at mid-range
+                            value = std::max(0.0f, std::min(65535.0f, value));
+                            chromaLine[s] = static_cast<uint16_t>(value);
+                        }
                         chromaField.push_back(chromaLine);
                     }
                     
                     // Fill remaining chroma lines if needed
-                    while (chromaField.size() < static_cast<size_t>(config.system.fieldLines[fieldCount % 2])) {
+                    while (chromaField.size() < videoParams.fieldHeight) {
                         VideoLine chromaLine(outputLineLen, 32768);
                         chromaField.push_back(chromaLine);
                     }
                     
+                    // Mix chroma into luma for composite output (required for ld-chroma-decoder)
+                    // Composite = Luma + (Chroma - 32768)
+                    for (size_t lineIdx = 0; lineIdx < field.size() && lineIdx < chromaField.size(); ++lineIdx) {
+                        auto& lumaLine = field[lineIdx];
+                        const auto& chromaLine = chromaField[lineIdx];
+                        
+                        for (size_t s = 0; s < lumaLine.size() && s < chromaLine.size(); ++s) {
+                            int32_t luma = lumaLine[s];
+                            int32_t chroma = static_cast<int32_t>(chromaLine[s]) - 32768;
+                            
+                            int32_t composite = luma + chroma;
+                            composite = std::max(0, std::min(65535, composite));
+                            
+                            lumaLine[s] = static_cast<uint16_t>(composite);
+                        }
+                    }
+
                     // Determine samples to remove based on what we actually consumed
                     if (!lineStarts.empty()) {
                         // Consume up to the end of the last line
@@ -960,6 +1114,8 @@ int main(int argc, char* argv[]) {
                     chromaBuffer.erase(chromaBuffer.begin(), chromaBuffer.begin() + samplesToRemove);
                     samplesToRemove = std::min(samplesConsumed, videoFloatBuffer.size());
                     videoFloatBuffer.erase(videoFloatBuffer.begin(), videoFloatBuffer.begin() + samplesToRemove);
+                    samplesToRemove = std::min(samplesConsumed, chromaFloatBuffer.size());
+                    chromaFloatBuffer.erase(chromaFloatBuffer.begin(), chromaFloatBuffer.begin() + samplesToRemove);
                 }
                 
                 processedBlocks++;

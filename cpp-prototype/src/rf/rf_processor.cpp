@@ -78,6 +78,10 @@ RFProcessor::RFProcessor(const Config& config)
     
     // Create combined bandpass filter by multiplying HPF * LPF
     filterBank_->createCombinedFilter("rf_bandpass", "rf_hpf", "rf_lpf");
+
+    // Create Chroma bandpass filter (PAL VHS: 60kHz - 1.3MHz, order 4)
+    // TODO: Make these configurable via Config
+    filterBank_->createButterworthBPF("chroma_bandpass", 0.06, 1.3, 4);
 }
 
 RFProcessor::~RFProcessor() = default;
@@ -119,6 +123,13 @@ RFProcessor::Result RFProcessor::processBlock(const RealArray& rfData) {
     // Step 1: Forward FFT (real to complex)
     auto fftData = fftEngine_->forwardFFT(rfData);
     
+    // Step 1b: Chroma path
+    // Copy FFT data for chroma processing before it gets modified by video filters
+    auto chromaFFT = fftData;
+    const auto& chromaFilter = filterBank_->getFilter("chroma_bandpass");
+    fftEngine_->applyFilter(chromaFFT, chromaFilter);
+    result.chroma = fftEngine_->inverseFFT(chromaFFT);
+
     // Step 2: Apply RF bandpass filter
     const auto& rfFilter = filterBank_->getFilter("rf_bandpass");
     fftEngine_->applyFilter(fftData, rfFilter);
