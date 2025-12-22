@@ -158,7 +158,7 @@ install(TARGETS vhs-rf-viewer
 if(WIN32)
     # Pre-link: ensure any running instance is terminated to avoid LNK1104 (file in use)
     add_custom_command(TARGET vhs-rf-viewer PRE_LINK
-        COMMAND cmd /c "taskkill /IM vhs-rf-viewer.exe /F >NUL 2>&1 || ver >NUL"
+        COMMAND powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-Process vhs-rf-viewer -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue; exit 0"
         COMMENT "Ensuring vhs-rf-viewer.exe is not running before link"
         VERBATIM)
 
@@ -182,18 +182,19 @@ if(WIN32)
         set(_VCPKG_WINDEPLOY "${CMAKE_CURRENT_SOURCE_DIR}/../../vcpkg_installed/x64-windows/tools/Qt6/bin/windeployqt.exe")
         if(EXISTS "${_VCPKG_WINDEPLOY}")
             set(WINDEPLOYQT_EXECUTABLE "${_VCPKG_WINDEPLOY}")
+            message(STATUS "Found windeployqt at: ${WINDEPLOYQT_EXECUTABLE}")
         endif()
     endif()
 
     if(WINDEPLOYQT_EXECUTABLE)
         # Skip windeployqt for Debug builds to avoid missing Qt debug DLLs in some vcpkg setups
-        # For multi-config generators, use a CMD guard on CONFIG
+        # Use PowerShell for cross-platform compatible post-build step
         add_custom_command(TARGET vhs-rf-viewer POST_BUILD
-            COMMAND cmd /c "if /I \"$<CONFIG>\"==\"Debug\" (echo Skipping windeployqt for Debug) else (\"${WINDEPLOYQT_EXECUTABLE}\" \"$<TARGET_FILE:vhs-rf-viewer>\" --verbose 0)"
+            COMMAND powershell -NoProfile -ExecutionPolicy Bypass -Command "if ($env:CMAKE_BUILD_TYPE -eq 'Debug') { echo 'Skipping windeployqt for Debug' } else { & '${WINDEPLOYQT_EXECUTABLE}' '$<TARGET_FILE:vhs-rf-viewer>' --verbose 0 }"
             COMMENT "Deploying Qt runtime (skips in Debug)"
             VERBATIM)
     else()
-        message(WARNING "windeployqt not found; Qt runtime DLLs will not be auto-deployed.")
+        message(STATUS "windeployqt not found; Qt runtime DLLs will not be auto-deployed. User must copy Qt DLLs manually or run windeployqt separately.")
     endif()
 endif()
 

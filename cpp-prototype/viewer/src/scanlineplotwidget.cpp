@@ -157,16 +157,16 @@ void ScanlinePlotWidget::renderScanline() {
     }
     
     // Draw scanline data
-    auto drawChannel = [&](const std::vector<float> &data, const QColor &color) {
-        if (data.empty()) return;
+    auto drawChannel = [&](const std::vector<float> &channelData, const QColor &color) {
+        if (channelData.empty()) return;
         
         painter.setPen(QPen(color, 2));
         
-        for (size_t i = 1; i < data.size(); ++i) {
-            float x1 = ((i - 1) * w) / static_cast<float>(data.size());
-            float y1 = h - (data[i - 1] * h);
-            float x2 = (i * w) / static_cast<float>(data.size());
-            float y2 = h - (data[i] * h);
+        for (size_t i = 1; i < channelData.size(); ++i) {
+            float x1 = ((i - 1) * w) / static_cast<float>(channelData.size());
+            float y1 = h - (channelData[i - 1] * h);
+            float x2 = (i * w) / static_cast<float>(channelData.size());
+            float y2 = h - (channelData[i] * h);
             
             painter.drawLine(
                 static_cast<int>(x1), static_cast<int>(y1),

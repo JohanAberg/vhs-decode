@@ -42,7 +42,7 @@ bool TBCWriter::isOpen() const {
     return videoFile_.is_open();
 }
 
-void TBCWriter::writeVideoField(const VideoField& fieldData, size_t fieldNumber) {
+void TBCWriter::writeVideoField(const VideoField& fieldData, size_t /* fieldNumber */) {
     if (!videoFile_.is_open()) {
         throw std::runtime_error("Video file not open");
     }
@@ -55,7 +55,7 @@ void TBCWriter::writeVideoField(const VideoField& fieldData, size_t fieldNumber)
     fieldsWritten_++;
 }
 
-void TBCWriter::writeChromaField(const VideoField& chromaData, size_t fieldNumber) {
+void TBCWriter::writeChromaField(const VideoField& chromaData, size_t /* fieldNumber */) {
     if (!writeChroma_ || !chromaFile_.is_open()) {
         return;  // Silently skip if chroma not enabled
     }

@@ -76,7 +76,7 @@ void OpenCLContext::initializeWithDevice(size_t platformIdx, size_t deviceIdx) {
 std::string OpenCLContext::getDeviceName() const {
     try {
         return device_.getInfo<CL_DEVICE_NAME>();
-    } catch (const cl::Error& e) {
+    } catch (const cl::Error& /* e */) {
         return "Unknown";
     }
 }
@@ -84,7 +84,7 @@ std::string OpenCLContext::getDeviceName() const {
 std::string OpenCLContext::getPlatformName() const {
     try {
         return platform_.getInfo<CL_PLATFORM_NAME>();
-    } catch (const cl::Error& e) {
+    } catch (const cl::Error& /* e */) {
         return "Unknown";
     }
 }
@@ -92,7 +92,7 @@ std::string OpenCLContext::getPlatformName() const {
 cl_device_type OpenCLContext::getDeviceType() const {
     try {
         return device_.getInfo<CL_DEVICE_TYPE>();
-    } catch (const cl::Error& e) {
+    } catch (const cl::Error& /* e */) {
         return CL_DEVICE_TYPE_DEFAULT;
     }
 }
@@ -104,7 +104,7 @@ std::string OpenCLContext::getDeviceTypeString() const {
 size_t OpenCLContext::getMaxWorkGroupSize() const {
     try {
         return device_.getInfo<CL_DEVICE_MAX_WORK_GROUP_SIZE>();
-    } catch (const cl::Error& e) {
+    } catch (const cl::Error& /* e */) {
         return 0;
     }
 }
@@ -112,7 +112,7 @@ size_t OpenCLContext::getMaxWorkGroupSize() const {
 cl_ulong OpenCLContext::getGlobalMemSize() const {
     try {
         return device_.getInfo<CL_DEVICE_GLOBAL_MEM_SIZE>();
-    } catch (const cl::Error& e) {
+    } catch (const cl::Error& /* e */) {
         return 0;
     }
 }
@@ -120,7 +120,7 @@ cl_ulong OpenCLContext::getGlobalMemSize() const {
 cl_ulong OpenCLContext::getLocalMemSize() const {
     try {
         return device_.getInfo<CL_DEVICE_LOCAL_MEM_SIZE>();
-    } catch (const cl::Error& e) {
+    } catch (const cl::Error& /* e */) {
         return 0;
     }
 }
@@ -128,7 +128,7 @@ cl_ulong OpenCLContext::getLocalMemSize() const {
 cl_uint OpenCLContext::getComputeUnits() const {
     try {
         return device_.getInfo<CL_DEVICE_MAX_COMPUTE_UNITS>();
-    } catch (const cl::Error& e) {
+    } catch (const cl::Error& /* e */) {
         return 0;
     }
 }
@@ -136,7 +136,7 @@ cl_uint OpenCLContext::getComputeUnits() const {
 cl_uint OpenCLContext::getMaxClockFrequency() const {
     try {
         return device_.getInfo<CL_DEVICE_MAX_CLOCK_FREQUENCY>();
-    } catch (const cl::Error& e) {
+    } catch (const cl::Error& /* e */) {
         return 0;
     }
 }

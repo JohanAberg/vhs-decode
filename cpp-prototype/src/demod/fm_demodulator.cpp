@@ -145,7 +145,7 @@ FMDemodulator::Result FMDemodulator::demodulate(const ComplexArray& analyticSign
     Result result;
     
     // FM demodulation using Python-compatible algorithm
-    float sampleRate = config_.inputFreqMHz * 1e6f;  // Convert MHz to Hz
+    float sampleRate = static_cast<float>(config_.inputFreqMHz * 1e6);  // Convert MHz to Hz
     result.video = impl_->fmDemodulate(analyticSignal, sampleRate);
     
     // Detect envelope for dropout detection

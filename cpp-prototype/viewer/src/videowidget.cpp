@@ -119,7 +119,7 @@ void VideoWidget::updateTexture() {
     // Convert to RGB32 format if needed
     QImage image = currentFrame_.convertToFormat(QImage::Format_RGB32);
     
-    texture_ = std::make_unique<QOpenGLTexture>(image.mirrored());
+    texture_ = std::make_unique<QOpenGLTexture>(image.flipped(Qt::Horizontal | Qt::Vertical));
     texture_->setMinificationFilter(QOpenGLTexture::Linear);
     texture_->setMagnificationFilter(QOpenGLTexture::Linear);
     

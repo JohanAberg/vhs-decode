@@ -121,6 +121,7 @@ void TimelineWidget::drawCachedFrames(QPainter &painter) {
     
     int timelineTop = (height() - TIMELINE_HEIGHT) / 2;
     int timelineBottom = timelineTop + TIMELINE_HEIGHT;
+    (void)timelineTop; // Suppress unused variable warning
     
     // Draw small markers at bottom of timeline for cached frames
     painter.setPen(Qt::NoPen);

@@ -138,43 +138,43 @@ void FilterKernel::allocateBuffers(size_t size) {
 
 std::vector<std::complex<double>> FilterKernel::applyFilter(
     const std::vector<std::complex<double>>& fftData,
-    const std::vector<double>& filterResponse
+    const std::vector<double>& /* filterResponse */
 ) {
     // TODO: Implement host-device transfer and kernel execution
     return fftData; // Placeholder
 }
 
 void FilterKernel::applyFilterGPU(
-    cl::Buffer& fftDataBuffer,
-    cl::Buffer& filterBuffer,
-    size_t N
+    cl::Buffer& /* fftDataBuffer */,
+    cl::Buffer& /* filterBuffer */,
+    size_t /* N */
 ) {
     // TODO: Implement kernel execution
 }
 
 void FilterKernel::applyComplexFilterGPU(
-    cl::Buffer& fftDataBuffer,
-    cl::Buffer& filterBuffer,
-    size_t N
+    cl::Buffer& /* fftDataBuffer */,
+    cl::Buffer& /* filterBuffer */,
+    size_t /* N */
 ) {
     // TODO: Implement kernel execution
 }
 
 void FilterKernel::applyMultipleFiltersGPU(
-    cl::Buffer& fftDataBuffer,
-    cl::Buffer& filtersBuffer,
-    size_t numFilters,
-    size_t N
+    cl::Buffer& /* fftDataBuffer */,
+    cl::Buffer& /* filtersBuffer */,
+    size_t /* numFilters */,
+    size_t /* N */
 ) {
     // TODO: Implement kernel execution
 }
 
 void FilterKernel::applyBandpassFilterGPU(
-    cl::Buffer& fftDataBuffer,
-    size_t N,
-    double lowCutoff,
-    double highCutoff,
-    double rolloff
+    cl::Buffer& /* fftDataBuffer */,
+    size_t /* N */,
+    double /* lowCutoff */,
+    double /* highCutoff */,
+    double /* rolloff */
 ) {
     // TODO: Implement kernel execution
 }

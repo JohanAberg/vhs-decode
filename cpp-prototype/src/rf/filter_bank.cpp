@@ -75,7 +75,7 @@ bool FilterBank::loadFilterFromCSV(const std::string& name, const std::string& c
 
 ComplexArray FilterBank::createIdealResponse(double lowCutoffMHz, 
                                              double highCutoffMHz,
-                                             bool isComplex) {
+                                             bool /* isComplex */) {
     size_t numBins = blockSize_ / 2 + 1;
     ComplexArray response(numBins, std::complex<float>(0.0f, 0.0f));
     

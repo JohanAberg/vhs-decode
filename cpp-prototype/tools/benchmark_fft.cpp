@@ -256,7 +256,7 @@ void printSummaryTable(const std::vector<BenchmarkResult>& results) {
     std::cout << "============================================================" << std::endl;
 }
 
-int main(int argc, char* argv[]) {
+int main(int /* argc */, char* /* argv */[]) {
     std::cout << "============================================================" << std::endl;
     std::cout << "          VHS-Decode FFT Benchmark Tool" << std::endl;
     std::cout << "   Prototype FFT vs FFTW3 vs GPU (clFFT) Comparison" << std::endl;

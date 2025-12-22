@@ -217,7 +217,7 @@ int main() {
     std::cout << "========================================" << std::endl;
     
     int passed = 0;
-    int total = results.size();
+    int total = static_cast<int>(results.size());
     
     for (const auto& result : results) {
         std::string status = result.passed ? "PASS" : "FAIL";

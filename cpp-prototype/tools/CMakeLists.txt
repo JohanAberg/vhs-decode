@@ -63,3 +63,28 @@ if(USE_FFTW3 AND FFTW3_FOUND)
 else()
     message(STATUS "FFT benchmark tool requires FFTW3 - skipping")
 endif()
+
+# GPU Kernel Benchmark tool
+if(ENABLE_GPU AND OpenCL_FOUND)
+    set(GPU_BENCHMARK_SOURCES
+        benchmark_gpu_kernels.cpp
+        ../src/gpu/opencl_context.cpp
+        ../src/gpu/opencl_buffer.cpp
+    )
+    
+    add_executable(benchmark-gpu-kernels ${GPU_BENCHMARK_SOURCES})
+    
+    target_include_directories(benchmark-gpu-kernels PRIVATE
+        ${CMAKE_SOURCE_DIR}/include
+    )
+    
+    target_link_libraries(benchmark-gpu-kernels
+        PRIVATE
+            OpenCL::OpenCL
+            Threads::Threads
+    )
+    
+    message(STATUS "Building GPU kernel benchmark tool")
+else()
+    message(STATUS "GPU kernel benchmark tool requires OpenCL - skipping")
+endif()
