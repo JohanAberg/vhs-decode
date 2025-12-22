@@ -32,6 +32,10 @@ set(SOURCES
     src/decoderworker.cpp
     src/framecache.cpp
     src/frameexporter.cpp
+    src/histogramwidget.cpp
+    src/vectorscopewidget.cpp
+    src/colorsamplerwidget.cpp
+    src/scanlineplotwidget.cpp
 )
 
 # Header files
@@ -42,6 +46,10 @@ set(HEADERS
     include/decoderworker.h
     include/framecache.h
     include/frameexporter.h
+    include/histogramwidget.h
+    include/vectorscopewidget.h
+    include/colorsamplerwidget.h
+    include/scanlineplotwidget.h
 )
 
 # UI files)
