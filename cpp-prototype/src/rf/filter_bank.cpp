@@ -1,3 +1,4 @@
+#define _USE_MATH_DEFINES
 #include "vhsdecode/filter_bank.hpp"
 #include <fstream>
 #include <sstream>

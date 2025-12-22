@@ -23,12 +23,6 @@ find_package(Qt6 REQUIRED COMPONENTS
     OpenGLWidgets
 )
 
-# Include directories
-include_directories(
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include
-)
-
 # Source files
 set(SOURCES
     src/main.cpp
@@ -55,11 +49,29 @@ set(UI_FILES
     ui/mainwindow.ui
 )
 
+# Set UI file properties to help Qt find them
+set_source_files_properties(
+    ui/mainwindow.ui
+    PROPERTIES
+    AUTOUIC_SEARCH_PATHS ${CMAKE_CURRENT_SOURCE_DIR}/ui
+)
+
 # Create executable
 add_executable(vhs-rf-viewer
     ${SOURCES}
     ${HEADERS}
     ${UI_FILES}
+)
+
+# Set target properties for Qt
+set_target_properties(vhs-rf-viewer PROPERTIES
+    AUTOUIC_SEARCH_PATHS "${CMAKE_CURRENT_SOURCE_DIR}/ui"
+)
+
+# Include directories for decoder and viewer
+target_include_directories(vhs-rf-viewer PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
 )
 
 # Link Qt libraries
@@ -69,12 +81,14 @@ target_link_libraries(vhs-rf-viewer PRIVATE
     Qt6::OpenGL
     Qt6::OpenGLWidgets
     Threads::Threads
+    opengl32  # Windows OpenGL library
 )
 
 # Link decoder libraries (from parent cpp-prototype)
-target_link_libraries(vhs-rf-viewer PRIVATE
-    vhsdecode-lib
-)
+# MOCK: Temporarily disabled while decoder integration is pending
+# target_link_libraries(vhs-rf-viewer PRIVATE
+#     vhsdecode-lib
+# )
 
 # Platform-specific settings
 if(WIN32)

@@ -9,6 +9,7 @@
 			"features": [
 				"concurrent",
 				"gui",
+				"opengl",
 				"jpeg",
 				"png",
 				"thread",

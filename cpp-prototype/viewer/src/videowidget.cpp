@@ -51,7 +51,7 @@ void VideoWidget::resetView() {
 }
 
 void VideoWidget::initializeGL() {
-    initializeOpenGLFunctions();
+    // Qt6 QOpenGLWidget handles initialization automatically
     glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
 }
 

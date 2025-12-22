@@ -15,7 +15,9 @@ namespace vhsdecode {
     namespace rf {
         class RFProcessor;
     }
-    class FMDemodulator;
+    namespace demod {
+        class FMDemodulator;
+    }
     class TBCScaler;
     class SyncDetector;
     class FilterBank;
@@ -74,12 +76,13 @@ private:
     QWaitCondition condition_;
     bool shouldStop_;
     
-    // Decoder components (created in worker thread)
-    std::unique_ptr<vhsdecode::RFReader> rfReader_;
-    std::unique_ptr<vhsdecode::rf::RFProcessor> rfProcessor_;
-    std::unique_ptr<vhsdecode::FMDemodulator> fmDemod_;
-    std::unique_ptr<vhsdecode::TBCScaler> tbcScaler_;
-    std::unique_ptr<vhsdecode::SyncDetector> syncDetector_;
+    // MOCK: Decoder components commented out for UI preview mode
+    // TODO: Integrate actual decoder when APIs are finalized
+    // std::unique_ptr<vhsdecode::RFReader> rfReader_;
+    // std::unique_ptr<vhsdecode::rf::RFProcessor> rfProcessor_;
+    // std::unique_ptr<vhsdecode::demod::FMDemodulator> fmDemod_;
+    // std::unique_ptr<vhsdecode::TBCScaler> tbcScaler_;
+    // std::unique_ptr<vhsdecode::SyncDetector> syncDetector_;
 };
 
 class DecoderWorker : public QObject {
