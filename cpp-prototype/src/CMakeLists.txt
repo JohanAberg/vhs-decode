@@ -40,6 +40,7 @@ if(ENABLE_GPU AND OpenCL_FOUND)
         gpu/phase_unwrap_kernel.cpp
         gpu/envelope_kernel.cpp
         gpu/filter_kernel.cpp
+        rf/rf_processor_gpu.cpp
     )
 endif()
 

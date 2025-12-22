@@ -31,8 +31,8 @@ public:
     fftwf_complex* complexBuffer;
 
 #ifdef HAVE_CLFFT
-    // GPU path
-    gpu::OpenCLContext clContext;
+    // GPU path - use pointers to avoid initialization when GPU not requested
+    std::unique_ptr<gpu::OpenCLContext> clContext;
     std::unique_ptr<gpu::CLFFTEngine> clfftEngine;
 #endif
     
@@ -69,7 +69,8 @@ public:
 #ifdef HAVE_CLFFT
         if (useGPU) {
             // Initialize GPU FFT engine; fallback is handled by caller on exception
-            clfftEngine = std::make_unique<gpu::CLFFTEngine>(clContext, blockSize, true);
+            clContext = std::make_unique<gpu::OpenCLContext>();
+            clfftEngine = std::make_unique<gpu::CLFFTEngine>(*clContext, blockSize, true);
         }
 #endif
     }

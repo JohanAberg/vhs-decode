@@ -13,3 +13,5 @@ Advanced flags
 
 `--doDOD` enables *dropout correction*. Please note, this does not force vhs-decode to perform dropout correction; instead, it adds a flag to the output .json, leaving it to be performed in the next step (running any of the gen_vid_chroma scripts.)
 
+`--gpu-chroma-tbc` enables the experimental GPU implementation of the chroma TBC scaler. Requires CuPy + CUDA and currently targets colour-under formats only; falls back to the CPU path automatically if the GPU path fails.
+

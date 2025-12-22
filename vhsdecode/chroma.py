@@ -6,6 +6,7 @@ import lddecode.core as ldd
 from vhsdecode.utils import get_line
 import scipy.signal as sps
 from vhsdecode.rust_utils import sosfiltfilt_rust
+from vhsdecode.gpu_utils import GPU_AVAILABLE, GPUError
 
 from numba import njit
 
@@ -204,7 +205,41 @@ def process_chroma(
     # Run TBC/downscale on chroma (if new field, else uses cache)
     # Cached if chroma process is run multiple times on one field due to track detection.
     if field.chroma_tbc_buffer is None:
-        chroma, _, _ = ldd.Field.downscale(field, channel="demod_burst")
+        chroma = None
+        use_gpu_tbc = getattr(field.rf.options, "gpu_chroma_tbc", False)
+        if use_gpu_tbc and not GPU_AVAILABLE:
+            if not getattr(field.rf, "_gpu_chroma_tbc_warned", False):
+                ldd.logger.warning(
+                    "GPU chroma TBC requested but CuPy/CUDA is unavailable; falling back to CPU."
+                )
+                field.rf._gpu_chroma_tbc_warned = True
+            use_gpu_tbc = False
+
+        if use_gpu_tbc:
+            try:
+                from vhsdecode.gpu_chroma_tbc import chroma_tbc_gpu
+
+                chroma = chroma_tbc_gpu(field, channel="demod_burst")
+                if not getattr(field.rf, "_gpu_chroma_tbc_logged", False):
+                    ldd.logger.info("GPU chroma TBC enabled")
+                    field.rf._gpu_chroma_tbc_logged = True
+            except (GPUError, ImportError) as exc:
+                if not getattr(field.rf, "_gpu_chroma_tbc_warned", False):
+                    ldd.logger.warning(
+                        "GPU chroma TBC failed (%s); using CPU path instead.", exc
+                    )
+                    field.rf._gpu_chroma_tbc_warned = True
+                chroma = None
+            except Exception as exc:
+                if not getattr(field.rf, "_gpu_chroma_tbc_warned", False):
+                    ldd.logger.exception(
+                        "Unexpected GPU chroma TBC error; falling back to CPU"
+                    )
+                    field.rf._gpu_chroma_tbc_warned = True
+                chroma = None
+
+        if chroma is None:
+            chroma, _, _ = ldd.Field.downscale(field, channel="demod_burst")
 
         # If chroma AFC is enabled
         if field.rf.do_cafc:

@@ -63,3 +63,7 @@ if(USE_FFTW3 AND FFTW3_FOUND)
 else()
     message(STATUS "FFT benchmark tool requires FFTW3 - skipping")
 endif()
+
+# Test RF data generator (no dependencies required)
+add_executable(generate-test-rf generate_test_rf.cpp)
+target_include_directories(generate-test-rf PRIVATE ${CMAKE_SOURCE_DIR}/include)

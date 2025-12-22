@@ -30,6 +30,10 @@
 #include "vhsdecode/fftw_engine.hpp"
 #endif
 
+#ifdef HAVE_OPENCL
+#include "vhsdecode/rf_processor_gpu.hpp"
+#endif
+
 namespace vhsdecode {
 namespace core {
 
@@ -261,7 +265,49 @@ DecoderPipelineResult runDecoderPipeline(const DecoderPipelineOptions& options,
             rfConfig.rfBandpassHighMHz = 5.78;
             rfConfig.useGPU = useGPU;
             
+            // Create RF processor (GPU or CPU based on useGPU flag)
+#if defined(HAVE_OPENCL) && defined(HAVE_CLFFT)
+            std::unique_ptr<rf::RFProcessorGPU> rfProcessorGPU;
+            std::unique_ptr<rf::RFProcessor> rfProcessorCPU;
+            
+            if (useGPU) {
+                std::cout << "  Mode: GPU-accelerated processing\n";
+                try {
+                    rfProcessorGPU = std::make_unique<rf::RFProcessorGPU>(rfConfig);
+                    std::cout << "✓ GPU RF processor initialized\n";
+                } catch (const std::exception& e) {
+                    std::cerr << "⚠ GPU RF processor failed: " << e.what() << "\n";
+                    std::cerr << "  Falling back to CPU processing\n";
+                    rfConfig.useGPU = false;
+                    rfProcessorCPU = std::make_unique<rf::RFProcessor>(rfConfig);
+                }
+            } else {
+                rfProcessorCPU = std::make_unique<rf::RFProcessor>(rfConfig);
+            }
+            
+            // Use pointer to abstract interface
+            auto processRFBlock = [&](const std::vector<uint8_t>& block) -> rf::RFProcessor::Result {
+                if (rfProcessorGPU) {
+                    return rfProcessorGPU->processBlock(block);
+                } else {
+                    return rfProcessorCPU->processBlock(block);
+                }
+            };
+            
+            auto& filterBank = rfProcessorGPU ? rfProcessorGPU->getFilterBank() : rfProcessorCPU->getFilterBank();
+#else
+            if (useGPU) {
+                std::cout << "  ⚠ GPU requested but OpenCL/clFFT support is unavailable; falling back to CPU.\n";
+            }
             rf::RFProcessor rfProcessor(rfConfig);
+            
+            auto processRFBlock = [&](const std::vector<uint8_t>& block) -> rf::RFProcessor::Result {
+                return rfProcessor.processBlock(block);
+            };
+            
+            auto& filterBank = rfProcessor.getFilterBank();
+#endif
+            
             std::cout << "✓ RF processor initialized\n";
             std::cout << "  Sample rate: " << rfConfig.sampleRateMHz << " MHz\n";
             std::cout << "  Block size: " << rfConfig.blockSize << " samples\n";
@@ -270,7 +316,6 @@ DecoderPipelineResult runDecoderPipeline(const DecoderPipelineOptions& options,
             
             // Test filter bank
             std::cout << "\nTesting filter bank...\n";
-            auto& filterBank = rfProcessor.getFilterBank();
             
             // Create additional filters
             filterBank.createLowpassFilter("video_lpf", 6.0);
@@ -323,7 +368,7 @@ DecoderPipelineResult runDecoderPipeline(const DecoderPipelineOptions& options,
                     std::cout << "    - Recording level too low during capture\n";
                 }
                 
-                auto rfResult = rfProcessor.processBlock(rfBlock.data);
+                auto rfResult = processRFBlock(rfBlock.data);
                 
                 std::cout << "✓ RF processing complete\n";
                 std::cout << "  Analytic signal samples: " << rfResult.analyticSignal.size() << "\n";
@@ -568,7 +613,7 @@ DecoderPipelineResult runDecoderPipeline(const DecoderPipelineOptions& options,
                 auto rfBlock = reader.readBlock(config.blockSize, blockNum);
                 if (rfBlock.data.empty()) break;
                 
-                auto rfResult = rfProcessor.processBlock(rfBlock.data);
+                auto rfResult = processRFBlock(rfBlock.data);
                 auto fmResult = fmDemod.demodulate(rfResult.analyticSignal);
                 
                 // Convert to digital values for vsync detection
@@ -636,7 +681,7 @@ DecoderPipelineResult runDecoderPipeline(const DecoderPipelineOptions& options,
                 if (rfBlock.data.empty()) break;
                 
                 // Process through RF pipeline
-                auto rfResult = rfProcessor.processBlock(rfBlock.data);
+                auto rfResult = processRFBlock(rfBlock.data);
                 
                 // FM demodulate (reuse existing object)
                 auto fmResult = fmDemod.demodulate(rfResult.analyticSignal);
@@ -988,7 +1033,7 @@ DecoderPipelineResult runDecoderPipeline(const DecoderPipelineOptions& options,
                             // Where does `chromaFloatBuffer` come from?
                             
                             // In main.cpp:
-                            // auto rfResult = rfProcessor.processBlock(rfBlock.data);
+                            // auto rfResult = processRFBlock(rfBlock.data);
                             // auto fmResult = fmDemod.demodulate(rfResult.analyticSignal);
                             // ...
                             // chromaFloatBuffer.insert(..., fmResult.chroma.begin(), ...);
