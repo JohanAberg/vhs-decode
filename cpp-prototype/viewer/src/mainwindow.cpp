@@ -207,22 +207,9 @@ MainWindow::MainWindow(QWidget *parent)
     ui->timelineWidget->setFocusPolicy(Qt::StrongFocus);
     
     updateFrameLabel();
-
-    // Initialize mock decoder worker so a test chart shows on startup
-    {
-        DecoderConfig cfg; // defaults are fine for mock chart
-        decoderWorker_ = std::make_unique<DecoderWorker>(cfg, 1);
-        connect(decoderWorker_.get(), &DecoderWorker::frameDecoded,
-                this, &MainWindow::onFrameDecoded);
-        connect(decoderWorker_.get(), &DecoderWorker::decodingProgress,
-                this, &MainWindow::onDecodingProgress);
-
-        // Minimal timeline setup for mock mode
-        totalFrames_ = 1;
-        ui->timelineWidget->setTotalFrames(totalFrames_);
-        ui->timelineWidget->setCurrentFrame(currentFrame_);
-        statusBar()->showMessage(tr("Mock mode: displaying PAL test chart"), 3000);
-    }
+    ui->timelineWidget->setTotalFrames(totalFrames_);
+    ui->timelineWidget->setCurrentFrame(currentFrame_);
+    statusBar()->showMessage(tr("Open an RF file to begin decoding."), 5000);
 }
 
 MainWindow::~MainWindow() {

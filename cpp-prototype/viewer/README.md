@@ -109,6 +109,24 @@ To configure, build, and launch the viewer in one step you can use the helper sc
 
 The script automatically sets `-DBUILD_VIEWER=ON`, chooses a per-configuration build directory, and runs the resulting `vhs-rf-viewer` binary. Use `--build-only` to compile without launching, or `--run-only` to launch an existing build.
 
+### Avoiding Snap/GLIBC symbol errors
+
+If Visual Studio Code (Snap) leaks `/snap/core20/...` paths into your environment you may see runtime failures such as:
+
+```
+/snap/core20/current/lib/x86_64-linux-gnu/libpthread.so.0: undefined symbol: __libc_pthread_init, version GLIBC_PRIVATE
+```
+
+Wrap any command (the viewer itself, `gdb`, etc.) with the helper below to scrub the Snap variables so Qt links against the host glibc:
+
+```bash
+./scripts/with-clean-env.sh cpp-prototype/build-release/viewer/vhs-rf-viewer
+# or, to debug:
+./scripts/with-clean-env.sh gdb --args cpp-prototype/build-release/viewer/vhs-rf-viewer
+```
+
+Running the helper without arguments opens a sanitized shell that you can launch tools from.
+
 ## Usage
 
 ### Opening a File
