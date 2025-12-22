@@ -15,6 +15,7 @@ set(SOURCES
     video/dropout_corrector.cpp
     video/tbc_corrector.cpp
     core/block_processor.cpp
+    core/pipeline.cpp
     core/main.cpp
 )
 

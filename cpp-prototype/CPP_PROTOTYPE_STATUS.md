@@ -48,26 +48,24 @@
 **Expected Improvements:**
 - Horizontal alignment should match Python within 1-2 pixels (was ~10 pixels off)
 - Vertical alignment may also improve due to better line0loc estimation
-- Overall correlation between C++ and Python outputs should increase significantly
 
-**Testing Required:**
-```bash
-# Python baseline (generates reference)
-python decode.py vhs --system PAL --length 1 --seek 983040 out1.u8 /tmp/python_compare
+### Modular Architecture Refactor (December 22, 2025) ✓
 
-# C++ with new algorithm
-./build/src/vhs-decode --system PAL --length 1 --seek 983040 out1.u8 /tmp/cpp_compare
+**Goal:** Make the design modular to support UI integration and dynamic parameter tuning.
 
-# Compare outputs
-python3 compare_tbc.py /tmp/python_compare.tbc /tmp/cpp_compare.tbc
-```
+**Changes:**
+1.  **FMDemodulator Refactor:**
+    -   Exposed `setSpikeThreshold(float mhz)` and `setSpikeReplacement(bool enable)`.
+    -   Internal state now manages these parameters.
+2.  **Pipeline Class:**
+    -   Created `vhsdecode::Pipeline` to orchestrate the flow.
+    -   Manages `RFProcessor`, `FMDemodulator`, and `VideoFilter`.
+    -   Exposes configuration for all stages (Bandpass, Spike Threshold, LPF, De-emphasis).
+3.  **Main Application:**
+    -   Updated `main.cpp` to use the new `FMDemodulator` API.
+    -   Verified that the modular components work correctly.
 
-**Files Modified:**
-- `cpp-prototype/include/vhsdecode/sync_detector.hpp` - Added computeLineLocsDict() declaration
-- `cpp-prototype/src/sync/sync_detector.cpp` - Implemented Python-style line positioning
-- `cpp-prototype/src/core/main.cpp` - Replaced uniform grid generation with pulse-based positioning
-
-## Overview
+## Current Status Summary
 
 The C++ prototype implements the core VHS RF decoding pipeline with CPU-based processing.
 It serves as a foundation for GPU acceleration via OpenCL.

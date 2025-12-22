@@ -16,7 +16,18 @@ public:
     static constexpr float TAU = 2.0f * static_cast<float>(M_PI);
     bool debugPrinted = false;
     
-    explicit Impl(const ProcessingConfig& cfg) : config(cfg) {}
+    // State for block continuity
+    std::complex<float> lastSample_ = {0.0f, 0.0f};
+    bool firstBlock_ = true;
+    
+    // Configuration
+    float spikeThresholdHz_ = 0.0f;
+    bool spikeReplacementEnabled_ = false;
+
+    explicit Impl(const ProcessingConfig& cfg) : config(cfg) {
+        // Default threshold: 10 MHz (safe high value)
+        spikeThresholdHz_ = 10.0e6f;
+    }
     
     // FM demodulation matching Python's unwrap_hilbert() algorithm exactly
     // Algorithm from lddecode/utils.py:
@@ -30,12 +41,26 @@ public:
         RealArray dangles(N);
         
         // Step 1 & 2: Get phase angles and compute first difference (ediff1d)
-        dangles[0] = 0.0f;  // to_begin=0 in Python ediff1d
+        
+        // Handle block boundary for first sample
+        if (firstBlock_) {
+            dangles[0] = 0.0f;  // to_begin=0 in Python ediff1d
+            firstBlock_ = false;
+        } else {
+            float prevAngle = std::arg(lastSample_);
+            float currAngle = std::arg(analyticSignal[0]);
+            dangles[0] = currAngle - prevAngle;
+        }
         
         for (size_t i = 1; i < N; ++i) {
             float prevAngle = std::arg(analyticSignal[i-1]);
             float currAngle = std::arg(analyticSignal[i]);
             dangles[i] = currAngle - prevAngle;
+        }
+        
+        // Store last sample for next block
+        if (N > 0) {
+            lastSample_ = analyticSignal[N-1];
         }
         
         // Debug: print phase differences before unwrap
@@ -131,6 +156,11 @@ public:
         return envelope;
     }
 
+    void reset() {
+        firstBlock_ = true;
+        lastSample_ = {0.0f, 0.0f};
+    }
+
     size_t replaceSpikes(RealArray& video, const ComplexArray& analyticSignal, float threshold) {
         const size_t N = video.size();
         std::vector<size_t> toFix;
@@ -198,6 +228,26 @@ FMDemodulator::FMDemodulator(const ProcessingConfig& config)
 
 FMDemodulator::~FMDemodulator() = default;
 
+void FMDemodulator::reset() {
+    impl_->reset();
+}
+
+void FMDemodulator::setSpikeThreshold(float thresholdMHz) {
+    impl_->spikeThresholdHz_ = thresholdMHz * 1e6f;
+}
+
+float FMDemodulator::getSpikeThreshold() const {
+    return impl_->spikeThresholdHz_ / 1e6f;
+}
+
+void FMDemodulator::setSpikeReplacement(bool enable) {
+    impl_->spikeReplacementEnabled_ = enable;
+}
+
+bool FMDemodulator::isSpikeReplacementEnabled() const {
+    return impl_->spikeReplacementEnabled_;
+}
+
 FMDemodulator::FMDemodulator(FMDemodulator&&) noexcept = default;
 FMDemodulator& FMDemodulator::operator=(FMDemodulator&&) noexcept = default;
 
@@ -217,6 +267,13 @@ FMDemodulator::Result FMDemodulator::demodulate(const ComplexArray& analyticSign
     result.chroma = result.video;
     
     return result;
+}
+
+size_t FMDemodulator::replaceSpikes(RealArray& video, const ComplexArray& analyticSignal) {
+    if (!impl_->spikeReplacementEnabled_) {
+        return 0;
+    }
+    return impl_->replaceSpikes(video, analyticSignal, impl_->spikeThresholdHz_);
 }
 
 size_t FMDemodulator::replaceSpikes(RealArray& video, const ComplexArray& analyticSignal, float threshold) {

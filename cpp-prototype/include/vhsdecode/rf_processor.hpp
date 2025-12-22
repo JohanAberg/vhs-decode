@@ -89,6 +89,13 @@ public:
      * @brief Get FFT engine
      */
     FFTEngine& getFFTEngine() { return *fftEngine_; }
+    
+    /**
+     * @brief Update bandpass filter parameters
+     * @param lowMHz Low cutoff frequency in MHz
+     * @param highMHz High cutoff frequency in MHz
+     */
+    void setBandpassFrequencies(double lowMHz, double highMHz);
 
 private:
     Config config_;

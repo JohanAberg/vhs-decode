@@ -85,6 +85,16 @@ RFProcessor::~RFProcessor() = default;
 RFProcessor::RFProcessor(RFProcessor&&) noexcept = default;
 RFProcessor& RFProcessor::operator=(RFProcessor&&) noexcept = default;
 
+void RFProcessor::setBandpassFrequencies(double lowMHz, double highMHz) {
+    config_.rfBandpassLowMHz = lowMHz;
+    config_.rfBandpassHighMHz = highMHz;
+    
+    // Recreate filters
+    filterBank_->createButterworthLPF("rf_lpf", highMHz, 20);
+    filterBank_->createButterworthHPF("rf_hpf", lowMHz, 12);
+    filterBank_->createCombinedFilter("rf_bandpass", "rf_hpf", "rf_lpf");
+}
+
 RealArray RFProcessor::uint8ToFloat(const std::vector<uint8_t>& data) {
     RealArray result(data.size());
     

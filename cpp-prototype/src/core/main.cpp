@@ -45,7 +45,49 @@ void printUsage(const char* progName) {
     std::cout << "  " << progName << " --format VHS --system NTSC input.r40 output.tbc\n";
 }
 
+#include <chrono>
+#include <map>
+
+struct Timer {
+    using Clock = std::chrono::high_resolution_clock;
+    std::map<std::string, double> durations;
+    std::map<std::string, int> counts;
+    
+    void measure(const std::string& name, std::function<void()> func) {
+        auto start = Clock::now();
+        func();
+        auto end = Clock::now();
+        std::chrono::duration<double, std::milli> ms = end - start;
+        durations[name] += ms.count();
+        counts[name]++;
+    }
+    
+    void print() {
+        std::cout << "\n=== Performance Benchmarks ===\n";
+        std::cout << std::left << std::setw(25) << "Operation" 
+                  << std::setw(15) << "Total (ms)" 
+                  << std::setw(15) << "Avg (ms)" 
+                  << std::setw(10) << "Calls" << "\n";
+        std::cout << std::string(65, '-') << "\n";
+        
+        for (const auto& pair : durations) {
+            const auto& name = pair.first;
+            double total = pair.second;
+            int count = counts[name];
+            double avg = total / count;
+            
+            std::cout << std::left << std::setw(25) << name 
+                      << std::setw(15) << std::fixed << std::setprecision(2) << total 
+                      << std::setw(15) << avg 
+                      << std::setw(10) << count << "\n";
+        }
+        std::cout << "==============================\n";
+    }
+};
+
 int main(int argc, char* argv[]) {
+    Timer timer;
+    
     // Default parameters
     std::string formatName = "VHS";
     std::string systemName = "NTSC";
@@ -531,6 +573,13 @@ int main(int argc, char* argv[]) {
             float outputZero = 256.0f;       // Digital value at sync tip
             float outScale = 53760.0f / 142.857f;  // = 376.32 digital per IRE
             
+            // Configure spike replacement
+            float whiteLevelHz = ire0Hz + (100.0f * hzPerIre);
+            float spikeThresholdHz = whiteLevelHz * 2.0f;
+            fmDemod.setSpikeThreshold(spikeThresholdHz / 1e6f);
+            fmDemod.setSpikeReplacement(true);
+            std::cout << "Spike replacement enabled: threshold " << (spikeThresholdHz / 1e6f) << " MHz\n";
+
             for (size_t blockNum = startBlock; blockNum < startBlock + initialBlocks; ++blockNum) {
                 auto rfBlock = reader.readBlock(config.blockSize, blockNum);
                 if (rfBlock.data.empty()) break;
@@ -596,17 +645,29 @@ int main(int argc, char* argv[]) {
             // Track if we need to skip samples in the accumulated buffer
             bool needToSkipSamples = (skipToVsync && fieldStartOffset > 0);
             
+            // Reset FM demodulator state before main loop (since we processed blocks for vsync detection)
+            fmDemod.reset();
+
             size_t processedBlocks = 0;
             for (size_t blockNum = startBlock; blockNum < totalBlocks; ++blockNum) {
                 // Read RF block
-                auto rfBlock = reader.readBlock(config.blockSize, blockNum);
+                RFBlock rfBlock;
+                timer.measure("1. Read Block", [&]() {
+                    rfBlock = reader.readBlock(config.blockSize, blockNum);
+                });
                 if (rfBlock.data.empty()) break;
                 
                 // Process through RF pipeline
-                auto rfResult = rfProcessor.processBlock(rfBlock.data);
+                rf::RFProcessor::Result rfResult;
+                timer.measure("2. RF Process", [&]() {
+                    rfResult = rfProcessor.processBlock(rfBlock.data);
+                });
                 
                 // FM demodulate (reuse existing object)
-                auto fmResult = fmDemod.demodulate(rfResult.analyticSignal);
+                demod::FMDemodulator::Result fmResult;
+                timer.measure("3. FM Demod", [&]() {
+                    fmResult = fmDemod.demodulate(rfResult.analyticSignal);
+                });
                 
                 // Debug: print FM demod output BEFORE video LPF (first block only)
                 if (processedBlocks == 0) {
@@ -627,12 +688,11 @@ int main(int argc, char* argv[]) {
                 }
                 
                 // Spike replacement (Diff Demod)
-                // Threshold = 2 * (100 IRE level)
-                // 100 IRE = 4.8 MHz (PAL) -> Threshold = 9.6 MHz
-                // Testing lower threshold to catch sparkles: 1.5 * 4.8 = 7.2 MHz
-                float whiteLevelHz = ire0Hz + (100.0f * hzPerIre);
-                float spikeThresholdHz = whiteLevelHz * 2.0f;
-                size_t replaced = fmDemod.replaceSpikes(fmResult.video, rfResult.analyticSignal, spikeThresholdHz);
+                // Uses configured threshold (set before loop)
+                size_t replaced = 0;
+                timer.measure("4. Spike Replace", [&]() {
+                    replaced = fmDemod.replaceSpikes(fmResult.video, rfResult.analyticSignal);
+                });
                 
                 if (replaced > 0 && processedBlocks < 5) {
                     std::cout << "  Replaced " << replaced << " spikes in block " << processedBlocks << "\n";
@@ -640,12 +700,12 @@ int main(int argc, char* argv[]) {
 
                 // Apply video filters (De-emphasis + LPF) in frequency domain
                 // FFT -> multiply by filters -> IFFT
-                {
+                timer.measure("5. Video Filter", [&]() {
                     auto videoFft = videoFftEngine.forwardFFT(fmResult.video);
                     videoFftEngine.applyFilter(videoFft, videoDeemphFilter); // Apply de-emphasis first
                     videoFftEngine.applyFilter(videoFft, videoLpfFilter);    // Then LPF
                     fmResult.video = videoFftEngine.inverseFFT(videoFft);
-                }
+                });
                 
                 // Debug: print video value range on first block
                 if (processedBlocks == 0) {
@@ -709,28 +769,30 @@ int main(int argc, char* argv[]) {
                     std::cout << "]\n";
                 }
                 
-                for (size_t i = 0; i < fmResult.video.size(); ++i) {
-                    // Convert frequency to IRE: IRE = (freq - ire0) / hzPerIre
-                    float freqHz = fmResult.video[i];
-                    float ire = (freqHz - ire0Hz) / hzPerIre;
+                timer.measure("6. Convert/Buffer", [&]() {
+                    for (size_t i = 0; i < fmResult.video.size(); ++i) {
+                        // Convert frequency to IRE: IRE = (freq - ire0) / hzPerIre
+                        float freqHz = fmResult.video[i];
+                        float ire = (freqHz - ire0Hz) / hzPerIre;
+                        
+                        // Convert IRE to 16-bit using Python's formula:
+                        // output = (ire - vsync_ire) * out_scale + outputZero
+                        float digital = (ire - vsyncIre) * outScale + outputZero;
+                        digital = std::max(0.0f, std::min(65535.0f, digital));
+                        videoBuffer.push_back(static_cast<uint16_t>(digital));
+                        videoFloatBuffer.push_back(digital);  // Keep float copy for sync detection
+                    }
                     
-                    // Convert IRE to 16-bit using Python's formula:
-                    // output = (ire - vsync_ire) * out_scale + outputZero
-                    float digital = (ire - vsyncIre) * outScale + outputZero;
-                    digital = std::max(0.0f, std::min(65535.0f, digital));
-                    videoBuffer.push_back(static_cast<uint16_t>(digital));
-                    videoFloatBuffer.push_back(digital);  // Keep float copy for sync detection
-                }
-                
-                // Convert chroma to 16-bit and add to buffer
-                for (size_t i = 0; i < fmResult.chroma.size(); ++i) {
-                    // Chroma uses same frequency-to-IRE scaling for now
-                    float freqHz = fmResult.chroma[i];
-                    float ire = (freqHz - ire0Hz) / hzPerIre;
-                    float digital = (ire - vsyncIre) * outScale + outputZero;
-                    digital = std::max(0.0f, std::min(65535.0f, digital));
-                    chromaBuffer.push_back(static_cast<uint16_t>(digital));
-                }
+                    // Convert chroma to 16-bit and add to buffer
+                    for (size_t i = 0; i < fmResult.chroma.size(); ++i) {
+                        // Chroma uses same frequency-to-IRE scaling for now
+                        float freqHz = fmResult.chroma[i];
+                        float ire = (freqHz - ire0Hz) / hzPerIre;
+                        float digital = (ire - vsyncIre) * outScale + outputZero;
+                        digital = std::max(0.0f, std::min(65535.0f, digital));
+                        chromaBuffer.push_back(static_cast<uint16_t>(digital));
+                    }
+                });
                 
                 totalSamplesProcessed += fmResult.video.size();
                 currentInputSampleOffset += fmResult.video.size();
@@ -1005,23 +1067,9 @@ int main(int argc, char* argv[]) {
             std::cout << "    - " << outputFile << "_chroma.tbc\n";
             std::cout << "    - " << outputFile << ".tbc.json\n";
             
-            std::cout << "\n" << std::string(60, '=') << "\n";
-            std::cout << "Status: Phase 2 RF Processing Working! ✓✓✓\n";
-            std::cout << std::string(60, '=') << "\n";
-            
-            std::cout << "\nPhase 1 Components:\n";
-            std::cout << "  1. ✓ RF reader with memory-mapped I/O\n";
-            std::cout << "  2. ✓ FFT engine (CPU, prototype implementation)\n";
-            std::cout << "  3. ✓ FM demodulator (phase unwrap, envelope detection)\n";
-            std::cout << "  4. ✓ TBC writer (video, chroma, metadata)\n";
-            
-            std::cout << "\nPhase 2 Components (NEW):\n";
-            std::cout << "  5. ✓ Filter bank (bandpass, lowpass, highpass)\n";
-            std::cout << "  6. ✓ Hilbert transform (analytic signal generation)\n";
-            std::cout << "  7. ✓ RF processor (integrated pipeline)\n";
-            
-            std::cout << "\n✓ FULL FILE DECODE: All " << fieldCount << " fields written!\n";
-            
+            timer.print();
+
+            return 0;
         } catch (const std::exception& e) {
             std::cerr << "Error during processing: " << e.what() << "\n";
             return 1;
