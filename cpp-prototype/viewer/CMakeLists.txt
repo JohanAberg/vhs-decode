@@ -92,19 +92,8 @@ target_link_libraries(vhs-rf-viewer PRIVATE
     opengl32  # Windows OpenGL library
 )
 
-# Link decoder libraries (from parent cpp-prototype)
-target_link_libraries(vhs-rf-viewer PRIVATE
-    vhsdecode-lib
-)
-
-target_include_directories(vhs-rf-viewer PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include
-)
-# MOCK: Temporarily disabled while decoder integration is pending
-# target_link_libraries(vhs-rf-viewer PRIVATE
-#     vhsdecode-lib
-# )
+# Note: Decoder library intentionally not linked in mock UI mode
+# This keeps the viewer independent of FFTW3 and other native deps
 
 # Platform-specific settings
 if(WIN32)
