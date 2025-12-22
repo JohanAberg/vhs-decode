@@ -2,6 +2,20 @@
 
 ## Latest Changes (December 22, 2025)
 
+### Decoder Pipeline API Extracted ✓
+
+**Problem Identified:** The CLI's `main.cpp` contained the entire decode pipeline, making it impossible to embed the decoder in the Qt viewer or any other host process.
+
+**Solution Implemented:**
+1. Moved the full decode pipeline into `core/decoder_pipeline.cpp` and exposed it via `vhsdecode/decoder_pipeline.hpp`.
+2. Added `DecoderPipelineOptions`, `DecoderPipelineResult`, and `DecoderObserver` interfaces so GUIs can configure runs, monitor progress, and receive field callbacks.
+3. Refactored `core/main.cpp` into a thin CLI wrapper that parses arguments and calls the shared pipeline API.
+
+**Result:**
+- CLI, GUI, and future tools can invoke the decoder without duplicating business logic.
+- Progress and logging hooks are now available for UI integration.
+- Build verified after refactor (`cmake --build cpp-prototype/build`).
+
 ### De-emphasis Implemented ✓
 
 **Problem Identified:** The C++ output was extremely noisy and sharp compared to Python (10x gradient ratio). This was due to missing de-emphasis filtering, which is required to compensate for the FM pre-emphasis applied during recording.

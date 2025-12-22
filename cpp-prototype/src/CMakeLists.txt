@@ -16,6 +16,7 @@ set(LIB_SOURCES
     video/dropout_corrector.cpp
     video/tbc_corrector.cpp
     core/block_processor.cpp
+    core/decoder_pipeline.cpp
 )
 
 # Add FFTW3-dependent sources if available
