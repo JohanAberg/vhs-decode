@@ -15,7 +15,7 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTOUIC ON)
 set(CMAKE_AUTORCC ON)
 
-# Find Qt6
+# Find Qt6 or Qt5
 find_package(Qt6 REQUIRED COMPONENTS
     Core
     Widgets
@@ -38,6 +38,7 @@ set(SOURCES
     src/vectorscopewidget.cpp
     src/colorsamplerwidget.cpp
     src/scanlineplotwidget.cpp
+    src/spectrogramwidget.cpp
     resources.qrc
 )
 
@@ -53,6 +54,7 @@ set(HEADERS
     include/vectorscopewidget.h
     include/colorsamplerwidget.h
     include/scanlineplotwidget.h
+    include/spectrogramwidget.h
 )
 
 # UI files)
@@ -103,7 +105,6 @@ target_link_libraries(vhs-rf-viewer PRIVATE
     Qt6::OpenGLWidgets
     Threads::Threads
 )
-
 # Platform-specific settings
 if(WIN32)
     # Windows: Create GUI executable (not console)

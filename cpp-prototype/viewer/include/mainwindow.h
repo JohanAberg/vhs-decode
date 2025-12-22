@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QMainWindow>
+#include <QDockWidget>
 #include <QString>
 #include <memory>
 
@@ -14,6 +15,7 @@ class HistogramWidget;
 class VectorscopeWidget;
 class ColorSamplerWidget;
 class ScanlinePlotWidget;
+class SpectrogramWidget;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -32,6 +34,7 @@ private slots:
     void onZoomIn();
     void onZoomOut();
     void onZoomReset();
+    void onToggleSpectrogram(bool checked);
     void onDemodParameterChanged();
     void onFrameDecoded(int frameNum, const QImage &image);
     void onDecodingProgress(int current, int total);
@@ -65,6 +68,7 @@ private:
     // Overlay geometry helpers (persist with QSettings)
     void saveOverlayGeometry(const QString &name, QWidget *w);
     bool restoreOverlayGeometry(const QString &name, QWidget *w);
+    void setupSpectrogramDock();
     
     Ui::MainWindow *ui;
     
@@ -89,4 +93,8 @@ private:
     ScanlinePlotWidget *scanlinePlotOverlay_;
     
     QImage currentDisplayFrame_;
+    
+    // Spectrogram dock widget
+    QDockWidget *spectrogramDock_;
+    SpectrogramWidget *spectrogramWidget_;
 };
