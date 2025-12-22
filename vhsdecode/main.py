@@ -240,6 +240,15 @@ def main(args=None, use_gui=False):
             " some of the chroma processing."
         ),
     )
+    chroma_group.add_argument(
+        "--gpu-chroma-tbc",
+        dest="gpu_chroma_tbc",
+        action="store_true",
+        default=False,
+        help=(
+            "Run chroma TBC scaling on the GPU (experimental, requires CuPy)."
+        ),
+    )
     plot_options = "demodblock, deemphasis, raw_pulses, line_locs"
     debug_group.add_argument(
         "--dp",

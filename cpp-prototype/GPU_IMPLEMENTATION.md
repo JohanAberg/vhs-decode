@@ -260,6 +260,29 @@ time ./vhs-decode --system PAL --gpu test.u8 gpu_output
 - Correlation should be >0.99 (allow floating-point differences)
 - MAD should be <10 (numerical error acceptable)
 
+## Recent Benchmark Snapshot (Dec 22, 2025)
+
+With `libclfft-dev` installed but only the Portable Computing Language (PoCL) runtime available, the FFT benchmark now exercises clFFT through the CPU-based OpenCL device. This validates build/link steps but does **not** represent real GPU behavior.
+
+| Block Size | FFTW3 (ms) | clFFT/PoCL (ms) | Speedup vs FFTW | Status |
+|------------|-----------:|----------------:|----------------:|--------|
+| 1,024 | 0.01 | 1.54 | 0.007× | ❌ Max error 1.22 |
+| 4,096 | 0.05 | 33.93 | 0.001× | ❌ Max error 1.22 |
+| 16,384 | 0.19 | 14.65 | 0.013× | ❌ Max error 1.22 |
+| 32,768 | 0.92 | 20.77 | 0.044× | ❌ Max error 1.22 |
+| 65,536 | 0.81 | 21.37 | 0.038× | ❌ Max error 1.22 |
+
+**Interpretation:**
+
+- PoCL uses the host CPU to emulate OpenCL, so clFFT runs orders of magnitude slower than FFTW and produces inaccurate results (magnitude scaling mismatch) under this backend.
+- The pipeline and benchmark wiring are correct (clFFT initializes, plans build, buffers transfer), but hardware acceleration requires a vendor GPU driver (NVIDIA CUDA/OpenCL, AMD ROCm, Intel Level Zero/OpenCL, etc.).
+
+**Next steps to unlock GPU gains:**
+
+1. Install a hardware OpenCL runtime (e.g., NVIDIA `nvidia-opencl-dev`+CUDA toolkit, AMD ROCm OpenCL, or Intel GPU drivers).
+2. Re-run `./cpp-prototype/build/tools/benchmark-fft` and verify GPU max error < 1e-6 and speedup ≫ 1×.
+3. Validate `RFProcessorGPU` inside the decoder (`--gpu`) using real GPU timings.
+
 ## Known Limitations
 
 ### CI Environment

@@ -263,7 +263,6 @@ def common_parser_inner(parser, use_gui=False, default_threads=DEFAULT_THREADS):
         default=default_threads,
         help="number of CPU threads to use",
     )
-
     extra_filtering_group = parser.add_argument_group("Extra filtering")
     extra_filtering_group.add_argument(
         "--ct",
@@ -419,6 +418,7 @@ def get_rf_options(args):
         "sharpness": args.sharpness,
         "notch": args.notch,
         "notch_q": args.notch_q,
+            "gpu_chroma_tbc": getattr(args, "gpu_chroma_tbc", False),
     }
     return rf_options
 
@@ -431,5 +431,5 @@ def get_extra_options(args, checkagc=False):
         "debug": args.debug,
     }
     if checkagc:
-        extra_options["useAGC"]: args.AGC and not args.noAGC
+        extra_options["useAGC"] = args.AGC and not args.noAGC
     return extra_options

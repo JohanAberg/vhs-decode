@@ -104,6 +104,9 @@ vhsdecode/_version.py
 # Test and benchmark results
 tests/benchmark_results.json
 
+# FFTW wisdom cache
+vhs-decode-fftw-wisdom.dat
+
 # Debug scripts
 debug_fir_design.py
 
