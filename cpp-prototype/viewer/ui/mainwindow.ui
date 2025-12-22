@@ -349,6 +349,8 @@
     <addaction name="actionZoomIn"/>
     <addaction name="actionZoomOut"/>
     <addaction name="actionZoomReset"/>
+    <addaction name="separator"/>
+    <addaction name="actionToggleSpectrogram"/>
    </widget>
    <addaction name="menuFile"/>
    <addaction name="menuView"/>
@@ -392,6 +394,17 @@
    </property>
    <property name="shortcut">
     <string>Ctrl+0</string>
+   </property>
+  </action>
+  <action name="actionToggleSpectrogram">
+   <property name="checkable">
+    <bool>true</bool>
+   </property>
+   <property name="text">
+    <string>Show Spectrogram</string>
+   </property>
+   <property name="shortcut">
+    <string>Ctrl+S</string>
    </property>
   </action>
  </widget>
