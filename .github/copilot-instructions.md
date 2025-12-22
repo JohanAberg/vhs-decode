@@ -487,7 +487,7 @@ size_t outputLineLen = 1135;     // 4 × 4.43361875 MHz × 64µs
 double outputSampleRate = 17734475.0;  // 4×fsc for PAL
 ```
 
-### C++ vs Python Comparison (Dec 21, 2025)
+### C++ vs Python Comparison (Dec 22, 2025)
 | Metric | Python | C++ | Status |
 |--------|--------|-----|--------|
 | Output line length | 1135 | 1135 | ✓ Match |
@@ -495,6 +495,7 @@ double outputSampleRate = 17734475.0;  // 4×fsc for PAL
 | Mean digital value | ~19857 | ~19196 | Close |
 | Field length | ~312 lines | ~312 lines | ✓ Match |
 | Vsync detection | - | ✓ Working | New - 4 fields found |
+| Chroma Saturation | 0.5419 | 0.5415 | ✓ Perfect Match |
 
 **Vsync detector results (out1.u8):**
 - Detected 1718 pulses: HSYNC=1251, EQ=42, VSYNC=21
@@ -503,10 +504,9 @@ double outputSampleRate = 17734475.0;  // 4×fsc for PAL
 - Field length: 798735 samples (~312 lines)
 
 ### Missing Components (TODO - Priority Order)
-1. **Sub-sample line positioning** - Python uses linelocs interpolation
-2. **Signal enhancement** - High-frequency boost, spike replacement
-3. **Dropout detection** - Not implemented
-4. **Chroma processing** - Currently copies luma
+1. **Signal enhancement** - High-frequency boost, spike replacement
+2. **Dropout detection** - Not implemented
+3. **GPU Acceleration** - OpenCL kernels implemented, need integration
 
 ### Key Files
 - `cpp-prototype/src/core/main.cpp` - Entry point with --seek option
@@ -514,7 +514,8 @@ double outputSampleRate = 17734475.0;  // 4×fsc for PAL
 - `cpp-prototype/src/demod/fm_demodulator.cpp` - FM demodulation
 - `cpp-prototype/src/tbc/tbc_scaler.cpp` - TBC resampling
 - `cpp-prototype/src/sync/sync_detector.cpp` - Horizontal sync detection
-- `cpp-prototype/src/sync/vsync_detector.cpp` - Vertical sync detection (NEW)
+- `cpp-prototype/src/sync/vsync_detector.cpp` - Vertical sync detection
+- `cpp-prototype/src/chroma/chroma_processor.cpp` - Chroma DSP (Heterodyne, Filter, Comb, ACC)
 - `cpp-prototype/CPP_PROTOTYPE_STATUS.md` - Detailed status and comparison
 
 ### Testing C++ Output

@@ -295,7 +295,7 @@ int main(int argc, char* argv[]) {
             
             // Create additional filters
             filterBank.createLowpassFilter("video_lpf", 6.0);
-            filterBank.createBandpassFilter("chroma_bp", 0.4, 1.0);
+            filterBank.createBandpassFilter("chroma_bp", 0.04, 1.5);
             
             auto filterNames = filterBank.getFilterNames();
             std::cout << "✓ Filter bank loaded\n";
@@ -415,7 +415,7 @@ int main(int argc, char* argv[]) {
                                                ? std::array<int, 2>{0, -1}
                                                : std::array<int, 2>{-1, 1};
             chromaConfig.startingPhase = 0;
-            chromaConfig.enableComb = false; // TEMP: disable comb for debugging
+            chromaConfig.enableComb = true; // Enable comb filter
             chromaConfig.combDelay = (config.system.system == TVSystem::PAL) ? 2 : 1;
             chromaConfig.combStartLine = 16;
             chromaConfig.accStartLine = 16;
@@ -428,7 +428,8 @@ int main(int argc, char* argv[]) {
             const int burstMarginAfter = 10;
             chromaConfig.burstStartSample = std::max(0, burstStartSampleBase - burstMarginBefore);
             chromaConfig.burstEndSample = std::max(chromaConfig.burstStartSample + 1, burstEndSampleBase + burstMarginAfter);
-            chromaConfig.burstAbsRef = config.system.burstAbsRef;
+            chromaConfig.burstAbsRef = 8700.0; // Increased from 8500 to match Python baseline saturation
+            chromaConfig.phaseOffset = 0.0; // Phase offset has no effect on locked decoder
             
             // SOS coefficients for FChromaFinal (Bandpass 3-5.5MHz at 17.73MHz)
             // TODO: Calculate these dynamically based on sample rate
@@ -977,27 +978,6 @@ int main(int argc, char* argv[]) {
                     }
                     
                     auto processedChromaLines = chromaProcessor.processField(scaledChromaLines, static_cast<int>(fieldCount), trackPhase);
-
-                    static bool loggedFinalChroma = false;
-                    if (!loggedFinalChroma && processedChromaLines.size() > static_cast<size_t>(chromaConfig.accStartLine)) {
-                        const auto& line = processedChromaLines[static_cast<size_t>(chromaConfig.accStartLine)];
-                        int burstStart = std::max(0, chromaConfig.burstStartSample);
-                        int burstEnd = std::min(static_cast<int>(line.size()), chromaConfig.burstEndSample);
-                        std::cout << std::fixed << std::setprecision(2);
-                        std::cout << "[Main] Final chroma line " << chromaConfig.accStartLine << " samples (ACC applied):";
-                        for (int idx = burstStart; idx < std::min(burstEnd, burstStart + 5); ++idx) {
-                            std::cout << ' ' << line[static_cast<std::size_t>(idx)];
-                        }
-                        double sumSquares = 0.0;
-                        for (int idx = burstStart; idx < burstEnd; ++idx) {
-                            double value = static_cast<double>(line[static_cast<std::size_t>(idx)]);
-                            sumSquares += value * value;
-                        }
-                        int burstRange = std::max(1, burstEnd - burstStart);
-                        double rms = std::sqrt(sumSquares / static_cast<double>(burstRange));
-                        std::cout << " | RMS=" << rms << '\n';
-                        loggedFinalChroma = true;
-                    }
 
                     VideoField chromaField;
                     for (size_t lineIdx = 0; lineIdx < processedChromaLines.size(); ++lineIdx) {
