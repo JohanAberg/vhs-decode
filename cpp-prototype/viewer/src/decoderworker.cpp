@@ -39,11 +39,6 @@ void DecoderThread::run() {
     // MOCK: No real decoder initialization
     qDebug() << "DecoderThread started (MOCK MODE - decoder integration pending)";
     
-    if (config_.filename.empty()) {
-        emit decodingError(-1, "No filename specified");
-        return;
-    }
-    
     // Process jobs
     while (!shouldStop_) {
         DecodeJob job;
@@ -68,35 +63,59 @@ void DecoderThread::run() {
     }
 }
 
-QImage DecoderThread::decodeFrame(int frameNumber, size_t fileOffset) {
-    // MOCK: Generate test pattern instead of real decoding
+QImage DecoderThread::decodeFrame(int frameNumber, size_t /*fileOffset*/) {
+    // Generate a synthetic PAL EBU 100/75 color bars test chart
     const int width = 720;
-    const int height = 576; // PAL resolution
-    
-    QImage image(width, height, QImage::Format_Grayscale8);
-    image.fill(128); // Gray background
-    
-    QPainter painter(&image);
-    
-    // Draw color bars at top
-    for (int i = 0; i < 8; i++) {
-        int gray = (i * 255) / 7;
-        painter.fillRect(i * width / 8, 0, width / 8, height / 3, QColor(gray, gray, gray));
+    const int height = 576; // PAL
+
+    QImage image(width, height, QImage::Format_RGB32);
+    QPainter p(&image);
+    p.fillRect(0, 0, width, height, Qt::black);
+
+    // Top: 7 vertical bars (White, Yellow, Cyan, Green, Magenta, Red, Blue)
+    const QColor bars[7] = {
+        QColor(235,235,235), // White
+        QColor(219,219,16),  // Yellow (approx 100/75)
+        QColor(16,235,235),  // Cyan
+        QColor(16,219,16),   // Green
+        QColor(235,16,235),  // Magenta
+        QColor(235,16,16),   // Red
+        QColor(16,16,235)    // Blue
+    };
+    const int topH = height * 5 / 9; // ~60%
+    for (int i = 0; i < 7; ++i) {
+        int x = i * width / 7;
+        int w = ((i+1) * width / 7) - x;
+        p.fillRect(x, 0, w, topH, bars[i]);
     }
-    
-    // Draw frame info text
-    painter.setPen(Qt::white);
-    QFont font("Arial", 32, QFont::Bold);
-    painter.setFont(font);
-    
-    QString text = QString("MOCK DECODER\n\nFrame %1\n\nDecoder Integration Pending\n\nUI Preview Mode").arg(frameNumber);
-    painter.drawText(QRect(0, height / 3, width, height * 2 / 3), Qt::AlignCenter, text);
-    
-    painter.end();
-    
-    // Simulate processing delay
-    QThread::msleep(50);
-    
+
+    // Middle: grey ramp (8 steps)
+    const int midY = topH;
+    const int midH = height * 2 / 9; // ~22%
+    for (int i = 0; i < 8; ++i) {
+        int x = i * width / 8;
+        int w = ((i+1) * width / 8) - x;
+        int g = i * 255 / 7;
+        p.fillRect(x, midY, w, midH, QColor(g,g,g));
+    }
+
+    // Bottom: PLUGE on black background
+    const int botY = midY + midH;
+    const int botH = height - botY;
+    p.fillRect(0, botY, width, botH, QColor(0,0,0));
+    // Three PLUGE bars near left
+    int plugeW = width / 32;
+    p.fillRect(width/16,          botY, plugeW, botH, QColor(0,0,0));     // below black (clipped)
+    p.fillRect(width/16+plugeW+4, botY, plugeW, botH, QColor(16,16,16));  // black
+    p.fillRect(width/16+2*(plugeW+4), botY, plugeW, botH, QColor(32,32,32)); // above black
+
+    // Label
+    p.setPen(Qt::white);
+    p.setFont(QFont("Arial", 16, QFont::Bold));
+    p.drawText(QRect(0, botY, width, botH), Qt::AlignCenter,
+               QString("PAL EBU 100/75 Color Bars - Frame %1").arg(frameNumber));
+    p.end();
+
     return image;
 }
 
@@ -120,6 +139,9 @@ DecoderWorker::DecoderWorker(const DecoderConfig &config, int numThreads, QObjec
         thread->start();
         threads_.push_back(std::move(thread));
     }
+
+    // Queue an initial frame by default so the test chart is shown on startup
+    requestFrame(0, /*priority*/1);
 }
 
 DecoderWorker::~DecoderWorker() {

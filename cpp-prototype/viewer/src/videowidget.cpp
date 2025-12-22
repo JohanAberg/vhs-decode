@@ -127,6 +127,23 @@ void VideoWidget::updateTexture() {
 }
 
 void VideoWidget::mousePressEvent(QMouseEvent *event) {
+    // Quick hair cross placement: Right-click (or Shift+Left) sets sample position
+    if (showHairCross_ && (event->button() == Qt::RightButton ||
+                           (event->button() == Qt::LeftButton && (event->modifiers() & Qt::ShiftModifier)))) {
+        QPoint screenPos = event->pos();
+        QPointF imagePos = screenToImage(QPointF(screenPos));
+        if (!currentFrame_.isNull() &&
+            imagePos.x() >= 0 && imagePos.x() < currentFrame_.width() &&
+            imagePos.y() >= 0 && imagePos.y() < currentFrame_.height()) {
+            hairCrossPos_ = imagePos.toPoint();
+            emit hairCrossPositionChanged(hairCrossPos_, screenPos);
+            emit scanlineChanged(hairCrossPos_.y());
+            update();
+            event->accept();
+            return;
+        }
+    }
+
     if (event->button() == Qt::LeftButton) {
         isPanning_ = true;
         lastMousePos_ = event->pos();

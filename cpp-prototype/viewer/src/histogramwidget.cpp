@@ -105,22 +105,70 @@ void HistogramWidget::resizeGL(int w, int h) {
 }
 
 void HistogramWidget::paintGL() {
-    if (overlayMode_) {
-        glClearColor(0.0f, 0.0f, 0.0f, 0.7f);
-    } else {
-        glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
+    // Offscreen render to avoid QPainter-on-OpenGL issues and match vectorscope behavior
+    const int w = width();
+    const int h = height();
+
+    QImage buffer(w, h, QImage::Format_ARGB32_Premultiplied);
+    buffer.fill(overlayMode_ ? QColor(0, 0, 0, 178) : QColor(26, 26, 26));
+
+    if (dataReady_) {
+        // Use a painter targeting the offscreen buffer
+        QPainter painter(&buffer);
+        painter.setRenderHint(QPainter::Antialiasing);
+
+        // Background grid
+        painter.setPen(QPen(QColor(50, 50, 50), 1));
+        for (int i = 0; i <= 4; ++i) {
+            int y = h * i / 4;
+            painter.drawLine(0, y, w, y);
+        }
+        for (int i = 0; i <= 4; ++i) {
+            int x = w * i / 4;
+            painter.drawLine(x, 0, x, h);
+        }
+
+        // Draw histograms
+        auto drawChannel = [&](const std::array<uint32_t, 256> &hist, const QColor &color) {
+            painter.setPen(QPen(color, 1));
+            for (int i = 0; i < 256; ++i) {
+                float value = static_cast<float>(hist[i]);
+                if (logScale_ && value > 0) {
+                    value = std::log10(value + 1.0f);
+                    float maxLog = std::log10(static_cast<float>(maxValue_) + 1.0f);
+                    value = (value / maxLog) * h;
+                } else if (maxValue_ > 0) {
+                    value = (value / static_cast<float>(maxValue_)) * h;
+                } else {
+                    value = 0.0f;
+                }
+
+                int x = (i * w) / 256;
+                int barHeight = static_cast<int>(value);
+                painter.drawLine(x, h, x, h - barHeight);
+            }
+        };
+
+        if (showRGB_) {
+            drawChannel(histogramR_, QColor(255, 100, 100, 180));
+            drawChannel(histogramG_, QColor(100, 255, 100, 180));
+            drawChannel(histogramB_, QColor(100, 100, 255, 180));
+        }
+        if (showLuma_) {
+            drawChannel(histogramLuma_, QColor(200, 200, 200, 220));
+        }
+
+        // Labels
+        painter.setPen(Qt::white);
+        painter.drawText(5, 15, "Histogram");
+        painter.drawText(5, h - 5, "0");
+        painter.drawText(w - 25, h - 5, "255");
+        painter.end();
     }
-    glClear(GL_COLOR_BUFFER_BIT);
-    
-    if (!dataReady_) {
-        return;
-    }
-    
-    if (overlayMode_) {
-        renderOverlay();
-    } else {
-        renderHistogram();
-    }
+
+    // Blit to screen
+    QPainter screen(this);
+    screen.drawImage(0, 0, buffer);
 }
 
 void HistogramWidget::computeHistogram(const QImage &frame) {
@@ -163,71 +211,11 @@ void HistogramWidget::computeHistogram(const QImage &frame) {
 }
 
 void HistogramWidget::renderHistogram() {
-    if (maxValue_ == 0) {
-        return;
-    }
-    
-    // Use QPainter for simpler rendering
-    QPainter painter(this);
-    painter.setRenderHint(QPainter::Antialiasing);
-    
-    int w = width();
-    int h = height();
-    
-    // Draw background grid
-    painter.setPen(QPen(QColor(50, 50, 50), 1));
-    for (int i = 0; i <= 4; ++i) {
-        int y = h * i / 4;
-        painter.drawLine(0, y, w, y);
-    }
-    for (int i = 0; i <= 4; ++i) {
-        int x = w * i / 4;
-        painter.drawLine(x, 0, x, h);
-    }
-    
-    // Draw histograms
-    auto drawChannel = [&](const std::array<uint32_t, 256> &hist, const QColor &color) {
-        painter.setPen(QPen(color, 1));
-        for (int i = 0; i < 256; ++i) {
-            float value = static_cast<float>(hist[i]);
-            if (logScale_ && value > 0) {
-                value = std::log10(value + 1.0f);
-                float maxLog = std::log10(static_cast<float>(maxValue_) + 1.0f);
-                value = (value / maxLog) * h;
-            } else {
-                value = (value / static_cast<float>(maxValue_)) * h;
-            }
-            
-            int x = (i * w) / 256;
-            int barHeight = static_cast<int>(value);
-            painter.drawLine(x, h, x, h - barHeight);
-        }
-    };
-    
-    if (showRGB_) {
-        drawChannel(histogramR_, QColor(255, 100, 100, 180));
-        drawChannel(histogramG_, QColor(100, 255, 100, 180));
-        drawChannel(histogramB_, QColor(100, 100, 255, 180));
-    }
-    
-    if (showLuma_) {
-        drawChannel(histogramLuma_, QColor(200, 200, 200, 220));
-    }
-    
-    // Draw labels
-    painter.setPen(Qt::white);
-    painter.drawText(5, 15, "Histogram");
-    painter.drawText(5, h - 5, "0");
-    painter.drawText(w - 25, h - 5, "255");
+    // No-op; painting handled in paintGL via offscreen buffer
 }
 
 void HistogramWidget::renderOverlay() {
-    renderHistogram();
-    
-    // Draw border for overlay mode
-    QPainter painter(this);
-    painter.setPen(QPen(QColor(255, 255, 255, 150), 2));
-    painter.drawRect(1, 1, width() - 2, height() - 2);
+    // Border is drawn by consumer as needed; offscreen takes care of content
 }
 
 void HistogramWidget::mousePressEvent(QMouseEvent *event) {

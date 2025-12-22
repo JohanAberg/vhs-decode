@@ -15,7 +15,7 @@
   </property>
   <property name="windowIcon">
    <iconset>
-    <normaloff>../../../assets/images/viewer/signal_color_simple_v01.png</normaloff>../../../assets/images/viewer/signal_color_simple_v01.png</iconset>
+    <normaloff>:/images/viewer/signal_color_v01.png</normaloff>:/images/viewer/signal_color_v01.png</iconset>
   </property>
   <widget class="QWidget" name="centralwidget">
    <layout class="QVBoxLayout" name="verticalLayout">
@@ -41,7 +41,7 @@
            <string/>
           </property>
           <property name="pixmap">
-           <pixmap>../../../assets/images/viewer/signal_color_v01.png</pixmap>
+           <pixmap>:/images/viewer/signal_color_v01.png</pixmap>
           </property>
           <property name="scaledContents">
            <bool>true</bool>

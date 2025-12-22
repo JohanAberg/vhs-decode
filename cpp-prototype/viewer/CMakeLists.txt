@@ -38,6 +38,7 @@ set(SOURCES
     src/vectorscopewidget.cpp
     src/colorsamplerwidget.cpp
     src/scanlineplotwidget.cpp
+    resources.qrc
 )
 
 # Header files
@@ -111,6 +112,15 @@ target_link_libraries(vhs-rf-viewer PRIVATE
 if(WIN32)
     # Windows: Create GUI executable (not console)
     set_target_properties(vhs-rf-viewer PROPERTIES WIN32_EXECUTABLE TRUE)
+
+    # Embed application icon if .ico exists at configure time
+    set(VIEWER_ICO "${CMAKE_CURRENT_SOURCE_DIR}/../../assets/images/viewer/signal_color_v01.ico")
+    if(EXISTS "${VIEWER_ICO}")
+        target_sources(vhs-rf-viewer PRIVATE viewer_icon.rc)
+        message(STATUS "Embedding viewer icon: ${VIEWER_ICO}")
+    else()
+        message(WARNING "Viewer .ico not found at configure: ${VIEWER_ICO}. Generate via scripts/generate_viewer_icon.ps1 or use runtime Qt icon.")
+    endif()
     
     # Enable High DPI support on Windows
     target_compile_definitions(vhs-rf-viewer PRIVATE
@@ -147,6 +157,12 @@ install(TARGETS vhs-rf-viewer
 
 # Windows: run windeployqt to copy Qt DLLs and plugins next to the exe
 if(WIN32)
+    # Pre-link: ensure any running instance is terminated to avoid LNK1104 (file in use)
+    add_custom_command(TARGET vhs-rf-viewer PRE_LINK
+        COMMAND cmd /c "taskkill /IM vhs-rf-viewer.exe /F >NUL 2>&1 || ver >NUL"
+        COMMENT "Ensuring vhs-rf-viewer.exe is not running before link"
+        VERBATIM)
+
     # Try to locate windeployqt from common vcpkg Qt6 locations
     find_program(WINDEPLOYQT_EXECUTABLE NAMES windeployqt windeployqt6
         HINTS
@@ -171,10 +187,12 @@ if(WIN32)
     endif()
 
     if(WINDEPLOYQT_EXECUTABLE)
+        # Skip windeployqt for Debug builds to avoid missing Qt debug DLLs in some vcpkg setups
+        # For multi-config generators, use a CMD guard on CONFIG
         add_custom_command(TARGET vhs-rf-viewer POST_BUILD
-            COMMAND "${WINDEPLOYQT_EXECUTABLE}" "$<TARGET_FILE:vhs-rf-viewer>" --verbose 0
-            COMMENT "Running windeployqt to deploy Qt runtime"
-        )
+            COMMAND cmd /c "if /I \"$<CONFIG>\"==\"Debug\" (echo Skipping windeployqt for Debug) else (\"${WINDEPLOYQT_EXECUTABLE}\" \"$<TARGET_FILE:vhs-rf-viewer>\" --verbose 0)"
+            COMMENT "Deploying Qt runtime (skips in Debug)"
+            VERBATIM)
     else()
         message(WARNING "windeployqt not found; Qt runtime DLLs will not be auto-deployed.")
     endif()

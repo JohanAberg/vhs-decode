@@ -1,0 +1,5 @@
+<RCC>
+  <qresource prefix="/images/viewer">
+    <file>../../assets/images/viewer/signal_color_v01.png</file>
+  </qresource>
+</RCC>

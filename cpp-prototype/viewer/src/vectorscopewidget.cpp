@@ -31,23 +31,28 @@ VectorscopeWidget::VectorscopeWidget(QWidget *parent)
 }
 
 VectorscopeWidget::~VectorscopeWidget() {
-    makeCurrent();
-    vbo_.reset();
-    vao_.reset();
-    pointShader_.reset();
-    targetShader_.reset();
-    doneCurrent();
+    // Safely clean up GL resources only if a context still exists
+    if (this->context()) {
+        makeCurrent();
+        vbo_.reset();
+        vao_.reset();
+        pointShader_.reset();
+        targetShader_.reset();
+        doneCurrent();
+    } else {
+        // Context already torn down; skip GL resource destruction to avoid driver crashes
+        vbo_.release();
+        vao_.release();
+        pointShader_.release();
+        targetShader_.release();
+    }
 }
 
 void VectorscopeWidget::setOverlayMode(bool overlay) {
     overlayMode_ = overlay;
-    if (overlay) {
-        setWindowFlags(Qt::FramelessWindowHint | Qt::Tool);
-        setAttribute(Qt::WA_TranslucentBackground);
-    } else {
-        setWindowFlags(Qt::Widget);
-        setAttribute(Qt::WA_TranslucentBackground, false);
-    }
+    // Note: QOpenGLWidget does not support WA_TranslucentBackground reliably across platforms.
+    // For overlay, we render a semi-transparent background in paintGL instead of changing window flags.
+    // Keep it as a regular child widget to avoid context issues/crashes on some drivers.
     update();
 }
 
@@ -150,88 +155,95 @@ void VectorscopeWidget::computeVectorscope(const QImage &frame) {
 }
 
 void VectorscopeWidget::renderVectorscope() {
-    QPainter painter(this);
-    painter.setRenderHint(QPainter::Antialiasing);
-    
-    int w = width();
-    int h = height();
+    // Render offscreen to avoid QPainter-on-OpenGL text issues
+    const int w = width();
+    const int h = height();
+    QImage buffer(w, h, QImage::Format_ARGB32_Premultiplied);
+    buffer.fill(QColor(0, 0, 0, 0));
+
+    QPainter p(&buffer);
+    p.setRenderHint(QPainter::Antialiasing);
+
     int centerX = w / 2;
     int centerY = h / 2;
     int radius = std::min(w, h) / 2 - 10;
-    
+
+    // Background for non-overlay mode
+    if (!overlayMode_) {
+        p.fillRect(0, 0, w, h, QColor(26, 26, 26));
+    }
+
     // Draw circular graticule
-    painter.setPen(QPen(QColor(50, 50, 50), 1));
+    p.setPen(QPen(QColor(50, 50, 50), 1));
     for (int i = 1; i <= 4; ++i) {
         int r = (radius * i) / 4;
-        painter.drawEllipse(centerX - r, centerY - r, r * 2, r * 2);
+        p.drawEllipse(centerX - r, centerY - r, r * 2, r * 2);
     }
-    
+
     // Draw crosshairs
-    painter.drawLine(centerX - radius, centerY, centerX + radius, centerY);
-    painter.drawLine(centerX, centerY - radius, centerX, centerY + radius);
-    
+    p.drawLine(centerX - radius, centerY, centerX + radius, centerY);
+    p.drawLine(centerX, centerY - radius, centerX, centerY + radius);
+
     // Draw target boxes if enabled
     if (showTargets_) {
-        renderTargets();
-    }
-    
-    // Draw vector data
-    if (dataReady_ && !vectorData_.empty()) {
-        painter.setPen(QPen(QColor(0, 255, 0, static_cast<int>(intensity_ * 100)), 1));
-        
-        for (size_t i = 0; i < vectorData_.size(); i += 2) {
-            float u = vectorData_[i];
-            float v = vectorData_[i + 1];
-            
-            // Clamp to -1 to +1
-            u = std::max(-1.0f, std::min(1.0f, u));
-            v = std::max(-1.0f, std::min(1.0f, v));
-            
-            int x = centerX + static_cast<int>(u * radius);
-            int y = centerY - static_cast<int>(v * radius);  // Invert Y
-            
-            painter.drawPoint(x, y);
+        // Targets depend only on geometry; render here using same painter
+        p.setPen(QPen(QColor(255, 255, 255, 100), 1));
+        for (const auto &target : targets_) {
+            int x = centerX + static_cast<int>(target.u * radius);
+            int y = centerY - static_cast<int>(target.v * radius);  // Invert Y
+            int boxSize = 8;
+            p.drawRect(x - boxSize/2, y - boxSize/2, boxSize, boxSize);
         }
     }
-    
-    // Draw labels
-    painter.setPen(Qt::white);
-    painter.drawText(5, 15, "Vectorscope");
-    painter.drawText(centerX + radius - 10, centerY - 5, "R");
-    painter.drawText(centerX - radius + 5, centerY - 5, "Cy");
-    painter.drawText(centerX - 5, centerY - radius + 15, "G");
-    painter.drawText(centerX - 5, centerY + radius - 5, "Mg");
+
+    // Draw vector data
+    if (dataReady_ && !vectorData_.empty()) {
+        p.setPen(QPen(QColor(0, 255, 0, static_cast<int>(intensity_ * 100)), 1));
+        for (size_t i = 0; i < vectorData_.size(); i += 2) {
+            float u = std::max(-1.0f, std::min(1.0f, vectorData_[i]));
+            float v = std::max(-1.0f, std::min(1.0f, vectorData_[i + 1]));
+            int x = centerX + static_cast<int>(u * radius);
+            int y = centerY - static_cast<int>(v * radius);
+            p.drawPoint(x, y);
+        }
+    }
+
+    // Labels
+    p.setPen(Qt::white);
+    p.drawText(5, 15, "Vectorscope");
+    p.drawText(centerX + radius - 10, centerY - 5, "R");
+    p.drawText(centerX - radius + 5, centerY - 5, "Cy");
+    p.drawText(centerX - 5, centerY - radius + 15, "G");
+    p.drawText(centerX - 5, centerY + radius - 5, "Mg");
+    p.end();
+
+    // Blit buffer to widget
+    QPainter painter(this);
+    painter.drawImage(0, 0, buffer);
 }
 
 void VectorscopeWidget::renderTargets() {
-    QPainter painter(this);
-    painter.setRenderHint(QPainter::Antialiasing);
-    
-    int w = width();
-    int h = height();
-    int centerX = w / 2;
-    int centerY = h / 2;
-    int radius = std::min(w, h) / 2 - 10;
-    
-    painter.setPen(QPen(QColor(255, 255, 255, 100), 1));
-    
-    for (const auto &target : targets_) {
-        int x = centerX + static_cast<int>(target.u * radius);
-        int y = centerY - static_cast<int>(target.v * radius);  // Invert Y
-        
-        // Draw small box
-        int boxSize = 8;
-        painter.drawRect(x - boxSize/2, y - boxSize/2, boxSize, boxSize);
-    }
+    // No-op: targets are drawn inside renderVectorscope() with the offscreen painter
 }
 
 void VectorscopeWidget::renderOverlay() {
+    // Render vectorscope onto offscreen buffer with translucent bg, then add border
+    const int w = width();
+    const int h = height();
+    QImage buffer(w, h, QImage::Format_ARGB32_Premultiplied);
+    buffer.fill(QColor(0, 0, 0, 0));
+
+    QPainter p(&buffer);
+    p.fillRect(0, 0, w, h, QColor(0, 0, 0, 178)); // ~0.7 alpha
+    p.end();
+
+    // Draw vectorscope into buffer by temporarily painting on this widget, then grabbing
+    // Simpler: call renderVectorscope to build its own buffer and blit directly, then draw border
     renderVectorscope();
-    
-    // Draw border for overlay mode
+
     QPainter painter(this);
     painter.setPen(QPen(QColor(255, 255, 255, 150), 2));
-    painter.drawRect(1, 1, width() - 2, height() - 2);
+    painter.drawRect(1, 1, w - 2, h - 2);
 }
 
 void VectorscopeWidget::mousePressEvent(QMouseEvent *event) {

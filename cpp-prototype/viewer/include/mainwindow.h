@@ -62,6 +62,9 @@ private:
     void stopPlayback();
     void setupAnalysisWidgets();
     void updateAnalysisWidgets(const QImage &frame);
+    // Overlay geometry helpers (persist with QSettings)
+    void saveOverlayGeometry(const QString &name, QWidget *w);
+    bool restoreOverlayGeometry(const QString &name, QWidget *w);
     
     Ui::MainWindow *ui;
     

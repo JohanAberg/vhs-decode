@@ -18,6 +18,7 @@
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QPushButton>
+#include <QSettings>
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
@@ -199,6 +200,22 @@ MainWindow::MainWindow(QWidget *parent)
     ui->timelineWidget->setFocusPolicy(Qt::StrongFocus);
     
     updateFrameLabel();
+
+    // Initialize mock decoder worker so a test chart shows on startup
+    {
+        DecoderConfig cfg; // defaults are fine for mock chart
+        decoderWorker_ = std::make_unique<DecoderWorker>(cfg, 1);
+        connect(decoderWorker_.get(), &DecoderWorker::frameDecoded,
+                this, &MainWindow::onFrameDecoded);
+        connect(decoderWorker_.get(), &DecoderWorker::decodingProgress,
+                this, &MainWindow::onDecodingProgress);
+
+        // Minimal timeline setup for mock mode
+        totalFrames_ = 1;
+        ui->timelineWidget->setTotalFrames(totalFrames_);
+        ui->timelineWidget->setCurrentFrame(currentFrame_);
+        statusBar()->showMessage(tr("Mock mode: displaying PAL test chart"), 3000);
+    }
 }
 
 MainWindow::~MainWindow() {
@@ -206,6 +223,26 @@ MainWindow::~MainWindow() {
         decoderWorker_->clear();
     }
     delete ui;
+}
+
+void MainWindow::saveOverlayGeometry(const QString &name, QWidget *w) {
+    if (!w) return;
+    QSettings settings("vhs-decode", "vhs-rf-viewer");
+    settings.setValue(QString("overlay/%1/pos").arg(name), w->pos());
+    settings.setValue(QString("overlay/%1/size").arg(name), w->size());
+}
+
+bool MainWindow::restoreOverlayGeometry(const QString &name, QWidget *w) {
+    if (!w) return false;
+    QSettings settings("vhs-decode", "vhs-rf-viewer");
+    const QVariant posVar = settings.value(QString("overlay/%1/pos").arg(name));
+    const QVariant sizeVar = settings.value(QString("overlay/%1/size").arg(name));
+    if (posVar.isValid() && sizeVar.isValid()) {
+        w->resize(sizeVar.toSize());
+        w->move(posVar.toPoint());
+        return true;
+    }
+    return false;
 }
 
 void MainWindow::onOpenFile() {
@@ -480,8 +517,8 @@ void MainWindow::setupAnalysisWidgets() {
     addDockWidget(Qt::RightDockWidgetArea, vectorscopeDock);
     vectorscopeDock->hide();
     
-    // Create color sampler widget (add to layout below video widget)
-    colorSamplerWidget_ = std::make_unique<ColorSamplerWidget>();
+    // Create color sampler widget (shown as top-level tool window when toggled)
+    colorSamplerWidget_ = std::make_unique<ColorSamplerWidget>(this);
     colorSamplerWidget_->hide();
     
     // Create dockable scanline plot widget
@@ -546,11 +583,25 @@ void MainWindow::onToggleVectorscope() {
 
 void MainWindow::onToggleColorSampler() {
     bool show = !colorSamplerWidget_->isVisible();
-    colorSamplerWidget_->setVisible(show);
     ui->videoWidget->setShowHairCross(show);
-    
-    if (show && !currentDisplayFrame_.isNull()) {
-        colorSamplerWidget_->updateFrame(currentDisplayFrame_);
+
+    if (show) {
+        // Configure as always-on-top tool window and position near the video widget
+        colorSamplerWidget_->setWindowFlags(Qt::Tool | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint);
+        colorSamplerWidget_->setObjectName("ColorSamplerOverlay");
+        if (!restoreOverlayGeometry("ColorSamplerOverlay", colorSamplerWidget_.get())) {
+            colorSamplerWidget_->resize(320, colorSamplerWidget_->height());
+            QPoint pos = ui->videoWidget->mapToGlobal(QPoint(10, 360));
+            colorSamplerWidget_->move(pos);
+        }
+        colorSamplerWidget_->show();
+
+        if (!currentDisplayFrame_.isNull()) {
+            colorSamplerWidget_->updateFrame(currentDisplayFrame_);
+        }
+    } else {
+        saveOverlayGeometry("ColorSamplerOverlay", colorSamplerWidget_.get());
+        colorSamplerWidget_->hide();
     }
 }
 
@@ -558,7 +609,18 @@ void MainWindow::onToggleScanlinePlot() {
     // Toggle visibility of scanline plot dock
     QDockWidget *dock = qobject_cast<QDockWidget*>(scanlinePlotWidget_->parentWidget());
     if (dock) {
-        dock->setVisible(!dock->isVisible());
+        bool show = !dock->isVisible();
+        dock->setVisible(show);
+        // If showing, ensure hair cross is enabled and update immediately
+        if (show) {
+            if (!ui->videoWidget->getShowHairCross()) {
+                ui->videoWidget->setShowHairCross(true);
+            }
+            if (!currentDisplayFrame_.isNull()) {
+                int scanlineY = ui->videoWidget->getHairCrossPos().y();
+                scanlinePlotWidget_->updateScanline(currentDisplayFrame_, scanlineY);
+            }
+        }
     }
 }
 
@@ -566,14 +628,20 @@ void MainWindow::onHistogramOverlay() {
     if (!histogramOverlay_) {
         histogramOverlay_ = new HistogramWidget(this);
         histogramOverlay_->setOverlayMode(true);
-        histogramOverlay_->setParent(ui->videoWidget);
-        histogramOverlay_->setGeometry(10, 10, 256, 150);
+        histogramOverlay_->setWindowFlags(Qt::Tool | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint);
+        histogramOverlay_->setObjectName("HistogramOverlay");
+        if (!restoreOverlayGeometry("HistogramOverlay", histogramOverlay_)) {
+            histogramOverlay_->resize(256, 150);
+            QPoint pos = ui->videoWidget->mapToGlobal(QPoint(10, 10));
+            histogramOverlay_->move(pos);
+        }
         histogramOverlay_->show();
         
         if (!currentDisplayFrame_.isNull()) {
             histogramOverlay_->updateHistogram(currentDisplayFrame_);
         }
     } else {
+        saveOverlayGeometry("HistogramOverlay", histogramOverlay_);
         delete histogramOverlay_;
         histogramOverlay_ = nullptr;
     }
@@ -581,16 +649,24 @@ void MainWindow::onHistogramOverlay() {
 
 void MainWindow::onVectorscopeOverlay() {
     if (!vectorscopeOverlay_) {
+        // Create as a top-level tool window linked to main window
         vectorscopeOverlay_ = new VectorscopeWidget(this);
         vectorscopeOverlay_->setOverlayMode(true);
-        vectorscopeOverlay_->setParent(ui->videoWidget);
-        vectorscopeOverlay_->setGeometry(10, 170, 256, 256);
+        vectorscopeOverlay_->setWindowFlags(Qt::Tool | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint);
+        vectorscopeOverlay_->setObjectName("VectorscopeOverlay");
+        if (!restoreOverlayGeometry("VectorscopeOverlay", vectorscopeOverlay_)) {
+            vectorscopeOverlay_->resize(256, 256);
+            // Position near the video widget
+            QPoint pos = ui->videoWidget->mapToGlobal(QPoint(10, 170));
+            vectorscopeOverlay_->move(pos);
+        }
         vectorscopeOverlay_->show();
         
         if (!currentDisplayFrame_.isNull()) {
             vectorscopeOverlay_->updateVectorscope(currentDisplayFrame_);
         }
     } else {
+        saveOverlayGeometry("VectorscopeOverlay", vectorscopeOverlay_);
         delete vectorscopeOverlay_;
         vectorscopeOverlay_ = nullptr;
     }
@@ -600,8 +676,13 @@ void MainWindow::onScanlinePlotOverlay() {
     if (!scanlinePlotOverlay_) {
         scanlinePlotOverlay_ = new ScanlinePlotWidget(this);
         scanlinePlotOverlay_->setOverlayMode(true);
-        scanlinePlotOverlay_->setParent(ui->videoWidget);
-        scanlinePlotOverlay_->setGeometry(10, 440, 400, 150);
+        scanlinePlotOverlay_->setWindowFlags(Qt::Tool | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint);
+        scanlinePlotOverlay_->setObjectName("ScanlinePlotOverlay");
+        if (!restoreOverlayGeometry("ScanlinePlotOverlay", scanlinePlotOverlay_)) {
+            scanlinePlotOverlay_->resize(400, 150);
+            QPoint pos = ui->videoWidget->mapToGlobal(QPoint(10, 440));
+            scanlinePlotOverlay_->move(pos);
+        }
         scanlinePlotOverlay_->show();
         
         if (!currentDisplayFrame_.isNull() && ui->videoWidget->getShowHairCross()) {
@@ -609,6 +690,7 @@ void MainWindow::onScanlinePlotOverlay() {
             scanlinePlotOverlay_->updateScanline(currentDisplayFrame_, scanlineY);
         }
     } else {
+        saveOverlayGeometry("ScanlinePlotOverlay", scanlinePlotOverlay_);
         delete scanlinePlotOverlay_;
         scanlinePlotOverlay_ = nullptr;
     }
