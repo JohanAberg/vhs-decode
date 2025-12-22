@@ -50,9 +50,13 @@ set(HEADERS
     include/frameexporter.h
 )
 
-# UI files
+# UI files)
 set(UI_FILES
     ui/mainwindow.ui
+)
+
+set_source_files_properties(${UI_FILES} PROPERTIES
+    AUTOUIC_SEARCH_PATHS "${CMAKE_CURRENT_SOURCE_DIR}/ui"
 )
 
 # Create executable
@@ -60,6 +64,10 @@ add_executable(vhs-rf-viewer
     ${SOURCES}
     ${HEADERS}
     ${UI_FILES}
+)
+
+set_target_properties(vhs-rf-viewer PROPERTIES
+    AUTOUIC_SEARCH_PATHS "${CMAKE_CURRENT_SOURCE_DIR}/ui"
 )
 
 # Link Qt libraries
@@ -74,6 +82,11 @@ target_link_libraries(vhs-rf-viewer PRIVATE
 # Link decoder libraries (from parent cpp-prototype)
 target_link_libraries(vhs-rf-viewer PRIVATE
     vhsdecode-lib
+)
+
+target_include_directories(vhs-rf-viewer PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
 )
 
 # Platform-specific settings
